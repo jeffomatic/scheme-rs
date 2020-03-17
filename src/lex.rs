@@ -274,7 +274,7 @@ impl Scanner<'_> {
     }
 }
 
-fn scan<'a>(src: &'a str) -> Result<Vec<Token>, Error> {
+pub fn scan<'a>(src: &'a str) -> Result<Vec<Token>, Error> {
     let mut t = Scanner::new(src);
     t.scan()
 }
