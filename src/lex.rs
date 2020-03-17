@@ -52,7 +52,7 @@ struct Stream<'a> {
 }
 
 impl Stream<'_> {
-    fn from_str<'a>(s: &'a str) -> Stream<'a> {
+    fn new<'a>(s: &'a str) -> Stream<'a> {
         Stream {
             iter: s.chars(),
             buf: VecDeque::new(),
@@ -113,170 +113,155 @@ pub struct Token {
     pub literal: String,
 }
 
-struct Scanner<'a> {
-    stream: Stream<'a>,
+fn open_brace(stream: &mut Stream) -> Token {
+    let (_, p) = stream.take();
+    Token {
+        t: TokenType::OpenBrace,
+        start: p,
+        end: p,
+        literal: "(".to_string(),
+    }
 }
 
-impl Scanner<'_> {
-    fn new<'a>(src: &'a str) -> Scanner {
-        Scanner {
-            stream: Stream::from_str(src),
+fn close_brace(stream: &mut Stream) -> Token {
+    let (_, p) = stream.take();
+    Token {
+        t: TokenType::CloseBrace,
+        start: p,
+        end: p,
+        literal: ")".to_string(),
+    }
+}
+
+fn identifier(stream: &mut Stream) -> Token {
+    let (c, start) = stream.take();
+    let mut end = start;
+    let mut literal = String::new();
+    literal.push(c);
+
+    loop {
+        if stream.is_end() {
+            break;
+        }
+
+        let (c, p) = stream.peek(0).unwrap();
+        if c.is_whitespace() || c == '(' || c == ')' {
+            break;
+        }
+
+        stream.advance();
+        end = p;
+        literal.push(c);
+    }
+
+    Token {
+        t: TokenType::Identifier,
+        start,
+        end,
+        literal,
+    }
+}
+
+fn string(stream: &mut Stream) -> Result<Token, Error> {
+    let (_, start) = stream.take();
+    let mut end;
+    let mut literal = "\"".to_string();
+    let mut escape = false;
+
+    loop {
+        if stream.is_end() {
+            return Err(Error::UnterminatedString(start));
+        }
+
+        let (c, p) = stream.take();
+        if c == '\n' {
+            return Err(Error::UnexpectedNewline(p));
+        }
+
+        literal.push(c);
+        end = p;
+
+        match c {
+            _ if escape => escape = false,
+            '\\' => escape = true,
+            '"' => break,
+            _ => (),
         }
     }
 
-    fn open_brace(&mut self) -> Token {
-        let (_, p) = self.stream.take();
-        Token {
-            t: TokenType::OpenBrace,
-            start: p,
-            end: p,
-            literal: "(".to_string(),
-        }
-    }
+    Ok(Token {
+        t: TokenType::String,
+        start,
+        end,
+        literal,
+    })
+}
 
-    fn close_brace(&mut self) -> Token {
-        let (_, p) = self.stream.take();
-        Token {
-            t: TokenType::CloseBrace,
-            start: p,
-            end: p,
-            literal: ")".to_string(),
-        }
-    }
+fn number(stream: &mut Stream) -> Result<Token, Error> {
+    let (c, start) = stream.take();
+    let mut end = start;
+    let mut literal = String::new();
+    literal.push(c);
+    let mut period_ok = true;
 
-    fn identifier(&mut self) -> Token {
-        let (c, start) = self.stream.take();
-        let mut end = start;
-        let mut literal = String::new();
+    loop {
+        if stream.is_end() {
+            break;
+        }
+
+        let (c, p) = stream.peek(0).unwrap();
+        if c.is_whitespace() || c == '(' || c == ')' {
+            break;
+        }
+
+        // Next char must be a digit, or it must be a period and
+        if !(c.is_digit(10) || (c == '.' && period_ok)) {
+            return Err(Error::InvalidCharForNumber(p, c));
+        }
+
+        stream.advance();
+        end = p;
         literal.push(c);
 
-        loop {
-            if self.stream.is_end() {
-                break;
-            }
-
-            let (c, p) = self.stream.peek(0).unwrap();
-            if c.is_whitespace() || c == '(' || c == ')' {
-                break;
-            }
-
-            self.stream.advance();
-            end = p;
-            literal.push(c);
-        }
-
-        Token {
-            t: TokenType::Identifier,
-            start,
-            end,
-            literal,
+        if c == '.' {
+            period_ok = false;
         }
     }
 
-    fn string(&mut self) -> Result<Token, Error> {
-        let (_, start) = self.stream.take();
-        let mut end;
-        let mut literal = "\"".to_string();
-        let mut escape = false;
-
-        loop {
-            if self.stream.is_end() {
-                return Err(Error::UnterminatedString(start));
-            }
-
-            let (c, p) = self.stream.take();
-            if c == '\n' {
-                return Err(Error::UnexpectedNewline(p));
-            }
-
-            literal.push(c);
-            end = p;
-
-            match c {
-                _ if escape => escape = false,
-                '\\' => escape = true,
-                '"' => break,
-                _ => (),
-            }
-        }
-
-        Ok(Token {
-            t: TokenType::String,
-            start,
-            end,
-            literal,
-        })
-    }
-
-    fn number(&mut self) -> Result<Token, Error> {
-        let (c, start) = self.stream.take();
-        let mut end = start;
-        let mut literal = String::new();
-        literal.push(c);
-        let mut period_ok = true;
-
-        loop {
-            if self.stream.is_end() {
-                break;
-            }
-
-            let (c, p) = self.stream.peek(0).unwrap();
-            if c.is_whitespace() || c == '(' || c == ')' {
-                break;
-            }
-
-            // Next char must be a digit, or it must be a period and
-            if !(c.is_digit(10) || (c == '.' && period_ok)) {
-                return Err(Error::InvalidCharForNumber(p, c));
-            }
-
-            self.stream.advance();
-            end = p;
-            literal.push(c);
-
-            if c == '.' {
-                period_ok = false;
-            }
-        }
-
-        Ok(Token {
-            t: TokenType::Number,
-            start,
-            end,
-            literal,
-        })
-    }
-
-    fn scan(&mut self) -> Result<Vec<Token>, Error> {
-        let mut tokens = Vec::new();
-        while !self.stream.is_end() {
-            let (c, _) = self.stream.peek(0).unwrap();
-            match c {
-                '(' => tokens.push(self.open_brace()),
-                ')' => tokens.push(self.close_brace()),
-                '"' => tokens.push(self.string()?),
-                '-' => match self.stream.peek(1) {
-                    Some((c2, _)) => {
-                        if c2.is_digit(10) {
-                            tokens.push(self.number()?);
-                        } else {
-                            tokens.push(self.identifier());
-                        }
-                    }
-                    None => tokens.push(self.identifier()),
-                },
-                _ if c.is_whitespace() => self.stream.advance(),
-                _ => tokens.push(self.identifier()),
-            }
-        }
-
-        Ok(tokens)
-    }
+    Ok(Token {
+        t: TokenType::Number,
+        start,
+        end,
+        literal,
+    })
 }
 
 pub fn scan<'a>(src: &'a str) -> Result<Vec<Token>, Error> {
-    let mut t = Scanner::new(src);
-    t.scan()
+    let mut stream = Stream::new(src);
+    let mut tokens = Vec::new();
+
+    while !stream.is_end() {
+        let (c, _) = stream.peek(0).unwrap();
+        match c {
+            '(' => tokens.push(open_brace(&mut stream)),
+            ')' => tokens.push(close_brace(&mut stream)),
+            '"' => tokens.push(string(&mut stream)?),
+            '-' => match stream.peek(1) {
+                Some((c2, _)) => {
+                    if c2.is_digit(10) {
+                        tokens.push(number(&mut stream)?);
+                    } else {
+                        tokens.push(identifier(&mut stream));
+                    }
+                }
+                None => tokens.push(identifier(&mut stream)),
+            },
+            _ if c.is_whitespace() => stream.advance(),
+            _ => tokens.push(identifier(&mut stream)),
+        }
+    }
+
+    Ok(tokens)
 }
 
 #[test]
