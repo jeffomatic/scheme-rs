@@ -23,7 +23,7 @@ impl fmt::Display for Error {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Node {
+pub enum Node {
     Leaf(lex::Token),
     Compound(Vec<Node>),
 }
@@ -42,7 +42,7 @@ fn compound(toks: &mut dyn Iterator<Item = &lex::Token>) -> Option<Node> {
     None
 }
 
-fn parse(toks: Vec<lex::Token>) -> Result<Vec<Node>, Error> {
+pub fn parse(toks: Vec<lex::Token>) -> Result<Vec<Node>, Error> {
     let mut seq = Vec::new();
     let mut iter = toks.iter();
 
