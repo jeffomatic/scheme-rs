@@ -256,6 +256,7 @@ pub fn scan<'a>(src: &'a str) -> Result<Vec<Token>, Error> {
                 }
                 None => tokens.push(identifier(&mut stream)),
             },
+            _ if c.is_digit(10) => tokens.push(number(&mut stream)?),
             _ if c.is_whitespace() => stream.advance(),
             _ => tokens.push(identifier(&mut stream)),
         }
@@ -336,7 +337,7 @@ a
         ]
     );
 
-    // nonstrings
+    // identifiers
     assert_eq!(
         scan("a abc abc( abc) -").unwrap(),
         vec![
@@ -381,6 +382,61 @@ a
                 start: SrcPos::new(0, 16),
                 end: SrcPos::new(0, 16),
                 literal: "-".to_string(),
+            },
+        ]
+    );
+
+    // numbers
+    assert_eq!(
+        scan("1 123 123. 123.4 -1 -123 -123. -123.4").unwrap(),
+        vec![
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 0 },
+                end: SrcPos { row: 0, col: 0 },
+                literal: "1".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 2 },
+                end: SrcPos { row: 0, col: 4 },
+                literal: "123".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 6 },
+                end: SrcPos { row: 0, col: 9 },
+                literal: "123.".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 11 },
+                end: SrcPos { row: 0, col: 15 },
+                literal: "123.4".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 17 },
+                end: SrcPos { row: 0, col: 18 },
+                literal: "-1".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 20 },
+                end: SrcPos { row: 0, col: 23 },
+                literal: "-123".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 25 },
+                end: SrcPos { row: 0, col: 29 },
+                literal: "-123.".to_string(),
+            },
+            Token {
+                t: TokenType::Number,
+                start: SrcPos { row: 0, col: 31 },
+                end: SrcPos { row: 0, col: 36 },
+                literal: "-123.4".to_string(),
             },
         ]
     );
