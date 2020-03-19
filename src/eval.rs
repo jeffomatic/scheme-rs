@@ -223,39 +223,16 @@ fn test_eval_let() {
 
 #[test]
 fn test_eval_primtive_arithmetic() {
-    assert_eq!(
-        eval(
-            &parse(scan("(primitive + 1 1)").unwrap()).unwrap()[0],
-            &Env::new(None),
-        )
-        .unwrap(),
-        Value::Number(2.0),
-    );
-
-    assert_eq!(
-        eval(
-            &parse(scan("(primitive - 2 1)").unwrap()).unwrap()[0],
-            &Env::new(None),
-        )
-        .unwrap(),
-        Value::Number(1.0),
-    );
-
-    assert_eq!(
-        eval(
-            &parse(scan("(primitive * 2 3)").unwrap()).unwrap()[0],
-            &Env::new(None),
-        )
-        .unwrap(),
-        Value::Number(6.0),
-    );
-
-    assert_eq!(
-        eval(
-            &parse(scan("(primitive / 6 2)").unwrap()).unwrap()[0],
-            &Env::new(None),
-        )
-        .unwrap(),
-        Value::Number(3.0),
-    );
+    let cases = vec![
+        ("(primitive + 1 1)", Value::Number(2.0)),
+        ("(primitive - 2 1)", Value::Number(1.0)),
+        ("(primitive * 2 3)", Value::Number(6.0)),
+        ("(primitive / 6 2)", Value::Number(3.0)),
+    ];
+    for c in cases.iter() {
+        assert_eq!(
+            eval(&parse(scan(c.0).unwrap()).unwrap()[0], &Env::new(None),).unwrap(),
+            c.1,
+        );
+    }
 }
