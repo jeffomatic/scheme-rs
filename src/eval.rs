@@ -12,6 +12,7 @@ pub enum Error {
     InvalidPrimitiveExpression, // TODO: add src position
     InvalidPrimitiveOperation,  // TODO: add src position
     InvalidPrimitiveOperand,    // TODO: add src position
+    InvalidLetExpression,       // TODO: add src position
 }
 
 impl error::Error for Error {}
@@ -98,6 +99,7 @@ fn eval_compound(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
     match &nodes[0] {
         Node::Leaf(tok) => match tok.t {
             TokenType::Identifier => match tok.literal.as_ref() {
+                "let" => eval_let(nodes, env),
                 "primitive" => eval_primitive(nodes, env),
                 _ => todo!(),
                 // _ => eval_application(nodes, env),
@@ -106,6 +108,48 @@ fn eval_compound(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
         },
         _ => todo!(),
     }
+}
+
+fn eval_let(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
+    if nodes.len() < 3 {
+        return Err(Error::InvalidLetExpression);
+    }
+
+    let bindings = match &nodes[1] {
+        Node::Compound(n) => n,
+        Node::Leaf(_) => return Err(Error::InvalidLetExpression),
+    };
+    let bodies = &nodes[2..nodes.len()];
+
+    // create a new environment and extend with the bindings
+    let mut next_env = Env::new(Some(env));
+    for n in bindings.iter() {
+        let binding = match n {
+            Node::Compound(nodes) => nodes,
+            Node::Leaf(_) => return Err(Error::InvalidLetExpression),
+        };
+        if binding.len() != 2 {
+            return Err(Error::InvalidLetExpression);
+        }
+
+        let identifier = match &binding[0] {
+            Node::Leaf(tok) => match tok.t {
+                TokenType::Identifier => &tok.literal,
+                _ => return Err(Error::InvalidLetExpression),
+            },
+            Node::Compound(_) => return Err(Error::InvalidLetExpression),
+        };
+
+        let value = eval(&binding[1], env)?;
+        next_env.symbols.insert(identifier.clone(), value);
+    }
+
+    let mut tail_value = Value::Null;
+    for b in bodies.iter() {
+        tail_value = eval(&b, &next_env)?;
+    }
+
+    Ok(tail_value)
 }
 
 fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
@@ -160,6 +204,22 @@ fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
 // }
 
 // fn apply(vals: Vec<Value>, env: &Env) -> Result<Value, Error> {}
+
+#[test]
+fn test_eval_let() {
+    let cases = vec![
+        ("(let ((x 1)) x)", Value::Number(1.0)),
+        ("(let ((x 1)) x 2)", Value::Number(2.0)),
+        ("(let ((x 1) (y 2)) (primitive + x y))", Value::Number(3.0)),
+        ("(let ((x (primitive + 1 3))) x)", Value::Number(4.0)),
+    ];
+    for c in cases.iter() {
+        assert_eq!(
+            eval(&parse(scan(c.0).unwrap()).unwrap()[0], &Env::new(None),).unwrap(),
+            c.1,
+        );
+    }
+}
 
 #[test]
 fn test_eval_primtive_arithmetic() {
