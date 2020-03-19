@@ -1,6 +1,8 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
+use std::sync::Arc;
 
 use super::lex::{scan, Token, TokenType};
 use super::parse::{parse, Node};
@@ -40,16 +42,16 @@ pub enum Value {
     String(String),
 }
 
-pub struct Env<'a> {
+pub struct Env {
     symbols: HashMap<String, Value>,
-    parent: Option<&'a Env<'a>>,
+    parent: Option<Arc<RefCell<Env>>>,
 }
 
-impl Env<'_> {
-    fn new<'a>(parent: Option<&'a Env<'a>>) -> Env<'a> {
+impl Env {
+    fn new<'a>(parent: Option<Arc<RefCell<Env>>>) -> Env {
         Env {
             symbols: HashMap::new(),
-            parent,
+            parent: parent.map(|p| p.clone()),
         }
     }
 
@@ -61,23 +63,23 @@ impl Env<'_> {
         match self.symbols.get(symbol) {
             Some(v) => Some(v.clone()),
             None => match &self.parent {
-                Some(p) => p.lookup(symbol),
+                Some(p) => p.borrow().lookup(symbol),
                 None => None,
             },
         }
     }
 }
 
-pub fn eval(node: &Node, env: &Env) -> Result<Value, Error> {
+pub fn eval(node: &Node, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     match node {
         Node::Leaf(tok) => eval_leaf(tok, env),
         Node::Compound(nodes) => eval_compound(nodes, env),
     }
 }
 
-fn eval_leaf(tok: &Token, env: &Env) -> Result<Value, Error> {
+fn eval_leaf(tok: &Token, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     match tok.t {
-        TokenType::Identifier => match env.lookup(&tok.literal) {
+        TokenType::Identifier => match env.borrow().lookup(&tok.literal) {
             Some(v) => Ok(v),
             None => Err(Error::UndefinedSymbol(tok.clone())),
         },
@@ -91,7 +93,7 @@ fn eval_leaf(tok: &Token, env: &Env) -> Result<Value, Error> {
     }
 }
 
-fn eval_compound(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
+fn eval_compound(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     if nodes.is_empty() {
         return Ok(Value::Null);
     }
@@ -110,7 +112,7 @@ fn eval_compound(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
     }
 }
 
-fn eval_let(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
+fn eval_let(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     if nodes.len() < 3 {
         return Err(Error::InvalidLetExpression);
     }
@@ -122,7 +124,7 @@ fn eval_let(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
     let bodies = &nodes[2..nodes.len()];
 
     // create a new environment and extend with the bindings
-    let mut next_env = Env::new(Some(env));
+    let next_env = Arc::new(RefCell::new(Env::new(Some(env.clone()))));
     for n in bindings.iter() {
         let binding = match n {
             Node::Compound(nodes) => nodes,
@@ -140,19 +142,22 @@ fn eval_let(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
             Node::Compound(_) => return Err(Error::InvalidLetExpression),
         };
 
-        let value = eval(&binding[1], env)?;
-        next_env.symbols.insert(identifier.clone(), value);
+        let value = eval(&binding[1], env.clone())?;
+        next_env
+            .borrow_mut()
+            .symbols
+            .insert(identifier.clone(), value);
     }
 
     let mut tail_value = Value::Null;
     for b in bodies.iter() {
-        tail_value = eval(&b, &next_env)?;
+        tail_value = eval(&b, next_env.clone())?;
     }
 
     Ok(tail_value)
 }
 
-fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
+fn eval_primitive(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     if nodes.len() < 2 {
         return Err(Error::InvalidPrimitiveExpression);
     }
@@ -171,12 +176,12 @@ fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
                 return Err(Error::InvalidPrimitiveOperation);
             }
 
-            let a = match eval(&nodes[2], env)? {
+            let a = match eval(&nodes[2], env.clone())? {
                 Value::Number(v) => v,
                 _ => return Err(Error::InvalidPrimitiveOperand),
             };
 
-            let b = match eval(&nodes[3], env)? {
+            let b = match eval(&nodes[3], env.clone())? {
                 Value::Number(v) => v,
                 _ => return Err(Error::InvalidPrimitiveOperand),
             };
@@ -195,7 +200,7 @@ fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
     }
 }
 
-// fn eval_application(node: Vec<Node>, env: &Env) -> Result<Value, Error> {
+// fn eval_application(node: Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
 //     let mut vals = Vec::new();
 //     for n in nodes.iter() {
 //         vals.push(eval(n, env)?);
@@ -203,7 +208,7 @@ fn eval_primitive(nodes: &Vec<Node>, env: &Env) -> Result<Value, Error> {
 //     apply(vals, env)
 // }
 
-// fn apply(vals: Vec<Value>, env: &Env) -> Result<Value, Error> {}
+// fn apply(vals: Vec<Value>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {}
 
 #[test]
 fn test_eval_let() {
@@ -215,7 +220,11 @@ fn test_eval_let() {
     ];
     for c in cases.iter() {
         assert_eq!(
-            eval(&parse(scan(c.0).unwrap()).unwrap()[0], &Env::new(None),).unwrap(),
+            eval(
+                &parse(scan(c.0).unwrap()).unwrap()[0],
+                Arc::new(RefCell::new(Env::new(None)))
+            )
+            .unwrap(),
             c.1,
         );
     }
@@ -231,7 +240,11 @@ fn test_eval_primtive_arithmetic() {
     ];
     for c in cases.iter() {
         assert_eq!(
-            eval(&parse(scan(c.0).unwrap()).unwrap()[0], &Env::new(None),).unwrap(),
+            eval(
+                &parse(scan(c.0).unwrap()).unwrap()[0],
+                Arc::new(RefCell::new(Env::new(None)))
+            )
+            .unwrap(),
             c.1,
         );
     }
