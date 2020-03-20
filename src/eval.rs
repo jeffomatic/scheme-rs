@@ -265,7 +265,7 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             TokenType::Identifier => &tok.literal,
             _ => return Err(Error::InvalidPrimitiveOperation),
         },
-        _ => return Err(Error::InvalidPrimitiveOperation),
+        Node::Compound(_) => return Err(Error::InvalidPrimitiveOperation),
     };
 
     match op.as_str() {
@@ -294,7 +294,12 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 
             return Ok(Value::Number(v));
         }
-        _ => todo!(),
+        "=" => {
+            let a = eval(&nodes[2], env.clone())?;
+            let b = eval(&nodes[3], env.clone())?;
+            Ok(Value::Boolean(a.eq(&b)))
+        }
+        _ => return Err(Error::InvalidPrimitiveOperation),
     }
 }
 
@@ -358,6 +363,15 @@ fn test_eval() {
         ("(primitive - 2 1)", Value::Number(1.0)),
         ("(primitive * 2 3)", Value::Number(6.0)),
         ("(primitive / 6 2)", Value::Number(3.0)),
+        ("(primitive = 1 1)", Value::Boolean(true)),
+        ("(primitive = 0 0)", Value::Boolean(true)),
+        ("(primitive = 1 0)", Value::Boolean(false)),
+        ("(primitive = #t #t)", Value::Boolean(true)),
+        ("(primitive = #f #f)", Value::Boolean(true)),
+        ("(primitive = #t #f)", Value::Boolean(false)),
+        (r#"(primitive = "a" "a")"#, Value::Boolean(true)),
+        (r#"(primitive = "b" "b")"#, Value::Boolean(true)),
+        (r#"(primitive = "a" "b")"#, Value::Boolean(false)),
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
@@ -370,6 +384,8 @@ fn test_eval() {
             )
             .unwrap(),
             c.1,
+            "expression: {}",
+            c.0
         );
     }
 }
