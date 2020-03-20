@@ -303,29 +303,57 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             let b = eval(&nodes[3], env.clone())?;
             Ok(Value::Boolean(a.eq(&b)))
         }
-        ">" => {
+        ">" | ">=" | "<" | "<=" => {
             if nodes.len() != 4 {
                 return Err(Error::InvalidPrimitiveOperation);
             }
 
             let a = eval(&nodes[2], env.clone())?;
             let b = eval(&nodes[3], env.clone())?;
-            match (a, b) {
-                (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
+            let (a, b) = match (a, b) {
+                (Value::Number(a), Value::Number(b)) => (a, b),
+                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+            };
+
+            let v = match op.as_str() {
+                ">" => a > b,
+                ">=" => a >= b,
+                "<" => a < b,
+                "<=" => a <= b,
+                _ => unreachable!(),
+            };
+
+            Ok(Value::Boolean(v))
+        }
+        "not" => {
+            if nodes.len() != 3 {
+                return Err(Error::InvalidPrimitiveOperation);
+            }
+
+            match eval(&nodes[2], env.clone())? {
+                Value::Boolean(a) => Ok(Value::Boolean(!a)),
                 _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
             }
         }
-        "<" => {
+        "and" | "or" => {
             if nodes.len() != 4 {
                 return Err(Error::InvalidPrimitiveOperation);
             }
 
             let a = eval(&nodes[2], env.clone())?;
             let b = eval(&nodes[3], env.clone())?;
-            match (a, b) {
-                (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b)),
+            let (a, b) = match (a, b) {
+                (Value::Boolean(a), Value::Boolean(b)) => (a, b),
                 _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
-            }
+            };
+
+            let v = match op.as_str() {
+                "and" => a && b,
+                "or" => a || b,
+                _ => unreachable!(),
+            };
+
+            Ok(Value::Boolean(v))
         }
         _ => return Err(Error::InvalidPrimitiveOperation),
     }
@@ -406,6 +434,16 @@ fn test_eval() {
         ("(primitive < 1 1)", Value::Boolean(false)),
         ("(primitive < 1 0)", Value::Boolean(false)),
         ("(primitive < 0 1)", Value::Boolean(true)),
+        ("(primitive not #t)", Value::Boolean(false)),
+        ("(primitive not #f)", Value::Boolean(true)),
+        ("(primitive and #f #f)", Value::Boolean(false)),
+        ("(primitive and #f #t)", Value::Boolean(false)),
+        ("(primitive and #t #f)", Value::Boolean(false)),
+        ("(primitive and #t #t)", Value::Boolean(true)),
+        ("(primitive or #f #f)", Value::Boolean(false)),
+        ("(primitive or #f #t)", Value::Boolean(true)),
+        ("(primitive or #t #f)", Value::Boolean(true)),
+        ("(primitive or #t #t)", Value::Boolean(true)),
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
