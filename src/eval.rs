@@ -1,7 +1,9 @@
 use std::cell::RefCell;
+use std::cmp;
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use super::lex::{scan, Token, TokenType};
@@ -11,10 +13,12 @@ use super::parse::{parse, Node};
 pub enum Error {
     UndefinedSymbol(Token),
     InvalidLeafNodeAtCompoundStart(Token),
+    InvalidLambdaExpression,    // TODO: add src position
+    InvalidLetExpression,       // TODO: add src position
     InvalidPrimitiveExpression, // TODO: add src position
     InvalidPrimitiveOperation,  // TODO: add src position
     InvalidPrimitiveOperand,    // TODO: add src position
-    InvalidLetExpression,       // TODO: add src position
+    InvalidApplication,         // TODO: add src position
 }
 
 impl error::Error for Error {}
@@ -35,28 +39,66 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
     Number(f64),
     String(String),
+    Proc(Vec<String>, Vec<Node>, EnvPtr),
+}
+
+// A wrapper for Arc<RefCell<Env>> that is Debug and PartialEq. These traits are
+// necessary so Value::Proc can satisfy those traits.
+#[derive(Clone)]
+pub struct EnvPtr(Arc<RefCell<Env>>);
+
+impl EnvPtr {
+    fn new(env: Env) -> EnvPtr {
+        Self(Arc::new(RefCell::new(env)))
+    }
+}
+
+impl Deref for EnvPtr {
+    type Target = Arc<RefCell<Env>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Debug for EnvPtr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TODO: env pointer debug print")
+    }
+}
+
+impl cmp::PartialEq for EnvPtr {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
 }
 
 pub struct Env {
     symbols: HashMap<String, Value>,
-    parent: Option<Arc<RefCell<Env>>>,
+    parent: Option<EnvPtr>,
 }
 
 impl Env {
-    fn new<'a>(parent: Option<Arc<RefCell<Env>>>) -> Env {
+    fn extend(parent: EnvPtr) -> Env {
         Env {
             symbols: HashMap::new(),
-            parent: parent.map(|p| p.clone()),
+            parent: Some(parent),
         }
     }
 
-    fn bind(&mut self, symbol: String, val: Value) {
-        self.symbols.insert(symbol, val);
+    fn root() -> Env {
+        Env {
+            symbols: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    fn bind(&mut self, symbol: &String, val: Value) {
+        self.symbols.insert(symbol.clone(), val);
     }
 
     fn lookup(&self, symbol: &String) -> Option<Value> {
@@ -70,14 +112,22 @@ impl Env {
     }
 }
 
-pub fn eval(node: &Node, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
+pub fn eval(node: &Node, env: EnvPtr) -> Result<Value, Error> {
     match node {
         Node::Leaf(tok) => eval_leaf(tok, env),
         Node::Compound(nodes) => eval_compound(nodes, env),
     }
 }
 
-fn eval_leaf(tok: &Token, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
+fn eval_sequence(nodes: &[Node], env: EnvPtr) -> Result<Value, Error> {
+    let mut tail_value = Value::Null;
+    for b in nodes.iter() {
+        tail_value = eval(&b, env.clone())?;
+    }
+    Ok(tail_value)
+}
+
+fn eval_leaf(tok: &Token, env: EnvPtr) -> Result<Value, Error> {
     match tok.t {
         TokenType::Identifier => match env.borrow().lookup(&tok.literal) {
             Some(v) => Ok(v),
@@ -93,7 +143,7 @@ fn eval_leaf(tok: &Token, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     }
 }
 
-fn eval_compound(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
+fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     if nodes.is_empty() {
         return Ok(Value::Null);
     }
@@ -101,18 +151,44 @@ fn eval_compound(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Err
     match &nodes[0] {
         Node::Leaf(tok) => match tok.t {
             TokenType::Identifier => match tok.literal.as_ref() {
+                "lambda" => eval_lambda(nodes, env),
                 "let" => eval_let(nodes, env),
                 "primitive" => eval_primitive(nodes, env),
-                _ => todo!(),
-                // _ => eval_application(nodes, env),
+                _ => eval_application(nodes, env),
             },
             _ => Err(Error::InvalidLeafNodeAtCompoundStart(tok.clone())),
         },
-        _ => todo!(),
+        _ => eval_application(nodes, env),
     }
 }
 
-fn eval_let(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
+fn eval_lambda(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
+    if nodes.len() < 3 {
+        return Err(Error::InvalidLambdaExpression);
+    }
+
+    let mut formals = Vec::new();
+    match &nodes[1] {
+        Node::Compound(formal_nodes) => {
+            for n in formal_nodes.iter() {
+                match n {
+                    Node::Leaf(tok) => match tok.t {
+                        TokenType::Identifier => formals.push(tok.literal.clone()),
+                        _ => return Err(Error::InvalidLambdaExpression),
+                    },
+                    Node::Compound(_) => return Err(Error::InvalidLambdaExpression),
+                }
+            }
+        }
+        Node::Leaf(_) => return Err(Error::InvalidLambdaExpression),
+    };
+
+    let bodies: Vec<Node> = nodes[2..nodes.len()].iter().cloned().collect();
+
+    Ok(Value::Proc(formals, bodies, env.clone()))
+}
+
+fn eval_let(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     if nodes.len() < 3 {
         return Err(Error::InvalidLetExpression);
     }
@@ -124,7 +200,7 @@ fn eval_let(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
     let bodies = &nodes[2..nodes.len()];
 
     // create a new environment and extend with the bindings
-    let next_env = Arc::new(RefCell::new(Env::new(Some(env.clone()))));
+    let next_env = EnvPtr::new(Env::extend(env.clone()));
     for n in bindings.iter() {
         let binding = match n {
             Node::Compound(nodes) => nodes,
@@ -143,21 +219,13 @@ fn eval_let(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
         };
 
         let value = eval(&binding[1], env.clone())?;
-        next_env
-            .borrow_mut()
-            .symbols
-            .insert(identifier.clone(), value);
+        next_env.borrow_mut().bind(&identifier, value);
     }
 
-    let mut tail_value = Value::Null;
-    for b in bodies.iter() {
-        tail_value = eval(&b, next_env.clone())?;
-    }
-
-    Ok(tail_value)
+    eval_sequence(bodies, next_env.clone())
 }
 
-fn eval_primitive(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
+fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     if nodes.len() < 2 {
         return Err(Error::InvalidPrimitiveExpression);
     }
@@ -200,15 +268,45 @@ fn eval_primitive(nodes: &Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Er
     }
 }
 
-// fn eval_application(node: Vec<Node>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {
-//     let mut vals = Vec::new();
-//     for n in nodes.iter() {
-//         vals.push(eval(n, env)?);
-//     }
-//     apply(vals, env)
-// }
+fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
+    let (formals, bodies, procenv) = match eval(&nodes[0], env.clone())? {
+        Value::Proc(f, b, pe) => (f, b, pe),
+        _ => return Err(Error::InvalidApplication),
+    };
 
-// fn apply(vals: Vec<Value>, env: Arc<RefCell<Env>>) -> Result<Value, Error> {}
+    if formals.len() != nodes.len() - 1 {
+        return Err(Error::InvalidApplication);
+    }
+
+    let mut extended = Env::extend(procenv.clone());
+    for (i, symbol) in formals.iter().enumerate() {
+        let argval = eval(&nodes[i + 1], env.clone())?;
+        extended.bind(&symbol, argval);
+    }
+
+    return eval_sequence(&bodies, EnvPtr::new(extended));
+}
+
+#[test]
+fn test_eval_proc() {
+    let cases = vec![
+        ("((lambda (a b) (primitive + a b)) 1 2)", Value::Number(3.0)),
+        (
+            "((lambda (a b) (primitive + a b) 4.0) 1 2)", // multibody lambda
+            Value::Number(4.0),
+        ),
+    ];
+    for c in cases.iter() {
+        assert_eq!(
+            eval(
+                &parse(scan(c.0).unwrap()).unwrap()[0],
+                EnvPtr::new(Env::root()),
+            )
+            .unwrap(),
+            c.1,
+        );
+    }
+}
 
 #[test]
 fn test_eval_let() {
@@ -222,7 +320,7 @@ fn test_eval_let() {
         assert_eq!(
             eval(
                 &parse(scan(c.0).unwrap()).unwrap()[0],
-                Arc::new(RefCell::new(Env::new(None)))
+                EnvPtr::new(Env::root()),
             )
             .unwrap(),
             c.1,
@@ -242,7 +340,7 @@ fn test_eval_primtive_arithmetic() {
         assert_eq!(
             eval(
                 &parse(scan(c.0).unwrap()).unwrap()[0],
-                Arc::new(RefCell::new(Env::new(None)))
+                EnvPtr::new(Env::root()),
             )
             .unwrap(),
             c.1,

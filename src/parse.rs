@@ -22,7 +22,7 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node {
     Leaf(lex::Token),
     Compound(Vec<Node>),
