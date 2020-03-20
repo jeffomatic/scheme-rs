@@ -313,67 +313,23 @@ fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 #[test]
 fn test_define() {
     let cases = vec![
+        // definitions
         ("(define x 1)", Value::Void),
         ("(define x 1) x", Value::Number(1.0)),
         ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
         ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
-    ];
-    for c in cases.iter() {
-        assert_eq!(
-            eval_sequence(
-                &parse(scan(c.0).unwrap()).unwrap(),
-                EnvPtr::new(Env::root()),
-            )
-            .unwrap(),
-            c.1,
-        );
-    }
-}
-
-#[test]
-fn test_eval_proc() {
-    let cases = vec![
+        // procs (lambdas and applications)
         ("((lambda (a b) (primitive + a b)) 1 2)", Value::Number(3.0)),
         (
             "((lambda (a b) (primitive + a b) 4.0) 1 2)", // multibody lambda
             Value::Number(4.0),
         ),
-    ];
-    for c in cases.iter() {
-        assert_eq!(
-            eval(
-                &parse(scan(c.0).unwrap()).unwrap()[0],
-                EnvPtr::new(Env::root()),
-            )
-            .unwrap(),
-            c.1,
-        );
-    }
-}
-
-#[test]
-fn test_eval_let() {
-    let cases = vec![
+        // local bindings (let)
         ("(let ((x 1)) x)", Value::Number(1.0)),
         ("(let ((x 1)) x 2)", Value::Number(2.0)),
         ("(let ((x 1) (y 2)) (primitive + x y))", Value::Number(3.0)),
         ("(let ((x (primitive + 1 3))) x)", Value::Number(4.0)),
-    ];
-    for c in cases.iter() {
-        assert_eq!(
-            eval(
-                &parse(scan(c.0).unwrap()).unwrap()[0],
-                EnvPtr::new(Env::root()),
-            )
-            .unwrap(),
-            c.1,
-        );
-    }
-}
-
-#[test]
-fn test_eval_primtive_arithmetic() {
-    let cases = vec![
+        // primitives
         ("(primitive + 1 1)", Value::Number(2.0)),
         ("(primitive - 2 1)", Value::Number(1.0)),
         ("(primitive * 2 3)", Value::Number(6.0)),
@@ -381,8 +337,8 @@ fn test_eval_primtive_arithmetic() {
     ];
     for c in cases.iter() {
         assert_eq!(
-            eval(
-                &parse(scan(c.0).unwrap()).unwrap()[0],
+            eval_sequence(
+                &parse(scan(c.0).unwrap()).unwrap(),
                 EnvPtr::new(Env::root()),
             )
             .unwrap(),
