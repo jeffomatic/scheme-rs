@@ -105,7 +105,7 @@ impl Env {
 
     fn lookup(&self, symbol: &String) -> Option<Value> {
         match self.symbols.get(symbol) {
-            Some(v) => Some(v.clone()),
+            Some(v) => Some(v.clone()), // todo: values should be smart pointers
             None => match &self.parent {
                 Some(p) => p.borrow().lookup(symbol),
                 None => None,
