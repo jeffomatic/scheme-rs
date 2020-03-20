@@ -20,6 +20,7 @@ pub enum Error {
     InvalidPrimitiveOperation,  // TODO: add src position
     InvalidPrimitiveOperand,    // TODO: add src position
     InvalidApplication,         // TODO: add src position
+    InvalidIfExpression,        // TODO: add src position
 }
 
 impl error::Error for Error {}
@@ -44,6 +45,7 @@ impl fmt::Display for Error {
 pub enum Value {
     Void, // the value of define expressions
     Null,
+    Boolean(bool),
     Number(f64),
     String(String),
     Closure(Vec<String>, Vec<Node>, EnvPtr),
@@ -131,9 +133,13 @@ fn eval_sequence(nodes: &[Node], env: EnvPtr) -> Result<Value, Error> {
 
 fn eval_leaf(tok: &Token, env: EnvPtr) -> Result<Value, Error> {
     match tok.t {
-        TokenType::Identifier => match env.borrow().lookup(&tok.literal) {
-            Some(v) => Ok(v),
-            None => Err(Error::UndefinedSymbol(tok.clone())),
+        TokenType::Identifier => match tok.literal.as_str() {
+            "#t" => Ok(Value::Boolean(true)),
+            "#f" => Ok(Value::Boolean(false)),
+            _ => match env.borrow().lookup(&tok.literal) {
+                Some(v) => Ok(v),
+                None => Err(Error::UndefinedSymbol(tok.clone())),
+            },
         },
         TokenType::String => {
             // remove bounding quotes
@@ -157,6 +163,7 @@ fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
                 "lambda" => eval_lambda(nodes, env),
                 "let" => eval_let(nodes, env),
                 "primitive" => eval_primitive(nodes, env),
+                "if" => eval_if(nodes, env),
                 _ => eval_application(nodes, env),
             },
             _ => Err(Error::InvalidLeafNodeAtCompoundStart(tok.clone())),
@@ -310,8 +317,25 @@ fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     return eval_sequence(&bodies, EnvPtr::new(extended));
 }
 
+fn eval_if(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
+    if nodes.len() != 4 {
+        return Err(Error::InvalidIfExpression);
+    }
+
+    let predicate = match eval(&nodes[1], env.clone())? {
+        Value::Boolean(b) => b,
+        _ => return Err(Error::InvalidIfExpression),
+    };
+
+    if predicate {
+        eval(&nodes[2], env.clone())
+    } else {
+        eval(&nodes[3], env.clone())
+    }
+}
+
 #[test]
-fn test_define() {
+fn test_eval() {
     let cases = vec![
         // definitions
         ("(define x 1)", Value::Void),
@@ -334,6 +358,9 @@ fn test_define() {
         ("(primitive - 2 1)", Value::Number(1.0)),
         ("(primitive * 2 3)", Value::Number(6.0)),
         ("(primitive / 6 2)", Value::Number(3.0)),
+        // if
+        ("(if #t 1 2)", Value::Number(1.0)),
+        ("(if #f 1 2)", Value::Number(2.0)),
     ];
     for c in cases.iter() {
         assert_eq!(
