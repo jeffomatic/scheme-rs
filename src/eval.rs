@@ -13,6 +13,7 @@ use super::parse::{parse, Node};
 pub enum Error {
     UndefinedSymbol(Token),
     InvalidLeafNodeAtCompoundStart(Token),
+    InvalidDefineExpression,    // TODO: add src position
     InvalidLambdaExpression,    // TODO: add src position
     InvalidLetExpression,       // TODO: add src position
     InvalidPrimitiveExpression, // TODO: add src position
@@ -41,6 +42,7 @@ impl fmt::Display for Error {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Void, // the value of define expressions
     Null,
     Number(f64),
     String(String),
@@ -151,6 +153,7 @@ fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     match &nodes[0] {
         Node::Leaf(tok) => match tok.t {
             TokenType::Identifier => match tok.literal.as_ref() {
+                "define" => eval_define(nodes, env),
                 "lambda" => eval_lambda(nodes, env),
                 "let" => eval_let(nodes, env),
                 "primitive" => eval_primitive(nodes, env),
@@ -160,6 +163,26 @@ fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
         },
         _ => eval_application(nodes, env),
     }
+}
+
+fn eval_define(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
+    // TODO: implement function definition version
+    if nodes.len() != 3 {
+        return Err(Error::InvalidDefineExpression);
+    }
+
+    let symbol = match &nodes[1] {
+        Node::Leaf(tok) => match tok.t {
+            TokenType::Identifier => &tok.literal,
+            _ => return Err(Error::InvalidDefineExpression),
+        },
+        _ => return Err(Error::InvalidDefineExpression),
+    };
+
+    let val = eval(&nodes[2], env.clone())?;
+    env.borrow_mut().bind(symbol, val);
+
+    Ok(Value::Void)
 }
 
 fn eval_lambda(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
@@ -285,6 +308,26 @@ fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     }
 
     return eval_sequence(&bodies, EnvPtr::new(extended));
+}
+
+#[test]
+fn test_define() {
+    let cases = vec![
+        ("(define x 1)", Value::Void),
+        ("(define x 1) x", Value::Number(1.0)),
+        ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
+        ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
+    ];
+    for c in cases.iter() {
+        assert_eq!(
+            eval_sequence(
+                &parse(scan(c.0).unwrap()).unwrap(),
+                EnvPtr::new(Env::root()),
+            )
+            .unwrap(),
+            c.1,
+        );
+    }
 }
 
 #[test]
