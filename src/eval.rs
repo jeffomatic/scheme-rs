@@ -46,11 +46,11 @@ pub enum Value {
     Null,
     Number(f64),
     String(String),
-    Proc(Vec<String>, Vec<Node>, EnvPtr),
+    Closure(Vec<String>, Vec<Node>, EnvPtr),
 }
 
 // A wrapper for Arc<RefCell<Env>> that is Debug and PartialEq. These traits are
-// necessary so Value::Proc can satisfy those traits.
+// necessary so Value::Closure can satisfy those traits.
 #[derive(Clone)]
 pub struct EnvPtr(Arc<RefCell<Env>>);
 
@@ -161,7 +161,7 @@ fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             },
             _ => Err(Error::InvalidLeafNodeAtCompoundStart(tok.clone())),
         },
-        _ => eval_application(nodes, env),
+        Node::Compound(_) => eval_application(nodes, env),
     }
 }
 
@@ -208,7 +208,7 @@ fn eval_lambda(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 
     let bodies: Vec<Node> = nodes[2..nodes.len()].iter().cloned().collect();
 
-    Ok(Value::Proc(formals, bodies, env.clone()))
+    Ok(Value::Closure(formals, bodies, env.clone()))
 }
 
 fn eval_let(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
@@ -293,7 +293,7 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 
 fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     let (formals, bodies, procenv) = match eval(&nodes[0], env.clone())? {
-        Value::Proc(f, b, pe) => (f, b, pe),
+        Value::Closure(f, b, pe) => (f, b, pe),
         _ => return Err(Error::InvalidApplication),
     };
 
@@ -318,7 +318,7 @@ fn test_define() {
         ("(define x 1) x", Value::Number(1.0)),
         ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
         ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
-        // procs (lambdas and applications)
+        // closures (lambdas and applications)
         ("((lambda (a b) (primitive + a b)) 1 2)", Value::Number(3.0)),
         (
             "((lambda (a b) (primitive + a b) 4.0) 1 2)", // multibody lambda
