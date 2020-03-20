@@ -295,9 +295,37 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             return Ok(Value::Number(v));
         }
         "=" => {
+            if nodes.len() != 4 {
+                return Err(Error::InvalidPrimitiveOperation);
+            }
+
             let a = eval(&nodes[2], env.clone())?;
             let b = eval(&nodes[3], env.clone())?;
             Ok(Value::Boolean(a.eq(&b)))
+        }
+        ">" => {
+            if nodes.len() != 4 {
+                return Err(Error::InvalidPrimitiveOperation);
+            }
+
+            let a = eval(&nodes[2], env.clone())?;
+            let b = eval(&nodes[3], env.clone())?;
+            match (a, b) {
+                (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
+                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+            }
+        }
+        "<" => {
+            if nodes.len() != 4 {
+                return Err(Error::InvalidPrimitiveOperation);
+            }
+
+            let a = eval(&nodes[2], env.clone())?;
+            let b = eval(&nodes[3], env.clone())?;
+            match (a, b) {
+                (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b)),
+                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+            }
         }
         _ => return Err(Error::InvalidPrimitiveOperation),
     }
@@ -372,6 +400,12 @@ fn test_eval() {
         (r#"(primitive = "a" "a")"#, Value::Boolean(true)),
         (r#"(primitive = "b" "b")"#, Value::Boolean(true)),
         (r#"(primitive = "a" "b")"#, Value::Boolean(false)),
+        ("(primitive > 1 1)", Value::Boolean(false)),
+        ("(primitive > 1 0)", Value::Boolean(true)),
+        ("(primitive > 0 1)", Value::Boolean(false)),
+        ("(primitive < 1 1)", Value::Boolean(false)),
+        ("(primitive < 1 0)", Value::Boolean(false)),
+        ("(primitive < 0 1)", Value::Boolean(true)),
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
