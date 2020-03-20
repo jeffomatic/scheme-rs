@@ -451,6 +451,40 @@ fn test_eval() {
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
+        // fibonacci with define
+        (
+            "
+            (define fib (lambda (n)
+                          (if (= n 0)
+                              0
+                              (if (= n 1)
+                                  1
+                                  (+ (fib (- n 1))
+                                     (fib (- n 2)))))))
+            (fib 10)
+            ",
+            Value::Number(55.0),
+        ),
+        // fibonacci with y-combinator
+        (
+            "
+            (let ((y (lambda (f)
+                       ((lambda (procedure)
+                          (f (lambda (arg) ((procedure procedure) arg))))
+                        (lambda (procedure)
+                          (f (lambda (arg) ((procedure procedure) arg)))))))
+                  (fib-pre (lambda (f)
+                             (lambda (n)
+                               (if (= n 0)
+                                   0
+                                   (if (= n 1)
+                                       1
+                                       (+ (f (- n 1)) (f (- n 2)))))))))
+              (let ((fib (y fib-pre)))
+                (fib 10)))
+            ",
+            Value::Number(55.0),
+        ),
     ];
     for c in cases.iter() {
         assert_eq!(
