@@ -13,14 +13,13 @@ use super::parse::{parse, Node};
 pub enum Error {
     UndefinedSymbol(Token),
     InvalidLeafNodeAtCompoundStart(Token),
-    InvalidDefineExpression,    // TODO: add src position
-    InvalidLambdaExpression,    // TODO: add src position
-    InvalidLetExpression,       // TODO: add src position
-    InvalidPrimitiveExpression, // TODO: add src position
-    InvalidPrimitiveOperation,  // TODO: add src position
-    InvalidPrimitiveOperand,    // TODO: add src position
-    InvalidApplication,         // TODO: add src position
-    InvalidIfExpression,        // TODO: add src position
+    InvalidDefineExpression,   // TODO: add src position
+    InvalidLambdaExpression,   // TODO: add src position
+    InvalidLetExpression,      // TODO: add src position
+    InvalidOperatorExpression, // TODO: add src position
+    InvalidOperandValue,       // TODO: add src position
+    InvalidApplication,        // TODO: add src position
+    InvalidIfExpression,       // TODO: add src position
 }
 
 impl error::Error for Error {}
@@ -158,12 +157,12 @@ fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 
     match &nodes[0] {
         Node::Leaf(tok) => match tok.t {
-            TokenType::Identifier => match tok.literal.as_ref() {
+            TokenType::Identifier => match tok.literal.as_str() {
                 "define" => eval_define(nodes, env),
                 "lambda" => eval_lambda(nodes, env),
                 "let" => eval_let(nodes, env),
-                "primitive" => eval_primitive(nodes, env),
                 "if" => eval_if(nodes, env),
+                op if is_operator(op) => eval_operator(nodes, env),
                 _ => eval_application(nodes, env),
             },
             _ => Err(Error::InvalidLeafNodeAtCompoundStart(tok.clone())),
@@ -255,33 +254,38 @@ fn eval_let(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
     eval_sequence(bodies, next_env.clone())
 }
 
-fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    if nodes.len() < 2 {
-        return Err(Error::InvalidPrimitiveExpression);
+fn is_operator(op: &str) -> bool {
+    match op {
+        "+" | "-" | "*" | "/" | "=" | ">" | ">=" | "<" | "<=" | "not" | "and" | "or" => true,
+        _ => false,
     }
+}
 
-    let op = match &nodes[1] {
+fn eval_operator(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
+    // We should have called is_operator() first, so the first node should
+    // reflect the operator.
+    let op = match &nodes[0] {
         Node::Leaf(tok) => match tok.t {
             TokenType::Identifier => &tok.literal,
-            _ => return Err(Error::InvalidPrimitiveOperation),
+            _ => unreachable!(),
         },
-        Node::Compound(_) => return Err(Error::InvalidPrimitiveOperation),
+        Node::Compound(_) => unreachable!(),
     };
 
     match op.as_str() {
         "+" | "-" | "*" | "/" => {
-            if nodes.len() != 4 {
-                return Err(Error::InvalidPrimitiveOperation);
+            if nodes.len() != 3 {
+                return Err(Error::InvalidOperatorExpression);
             }
 
-            let a = match eval(&nodes[2], env.clone())? {
+            let a = match eval(&nodes[1], env.clone())? {
                 Value::Number(v) => v,
-                _ => return Err(Error::InvalidPrimitiveOperand),
+                _ => return Err(Error::InvalidOperandValue),
             };
 
-            let b = match eval(&nodes[3], env.clone())? {
+            let b = match eval(&nodes[2], env.clone())? {
                 Value::Number(v) => v,
-                _ => return Err(Error::InvalidPrimitiveOperand),
+                _ => return Err(Error::InvalidOperandValue),
             };
 
             let v = match op.as_str() {
@@ -295,24 +299,24 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             return Ok(Value::Number(v));
         }
         "=" => {
-            if nodes.len() != 4 {
-                return Err(Error::InvalidPrimitiveOperation);
+            if nodes.len() != 3 {
+                return Err(Error::InvalidOperatorExpression);
             }
 
-            let a = eval(&nodes[2], env.clone())?;
-            let b = eval(&nodes[3], env.clone())?;
+            let a = eval(&nodes[1], env.clone())?;
+            let b = eval(&nodes[2], env.clone())?;
             Ok(Value::Boolean(a.eq(&b)))
         }
         ">" | ">=" | "<" | "<=" => {
-            if nodes.len() != 4 {
-                return Err(Error::InvalidPrimitiveOperation);
+            if nodes.len() != 3 {
+                return Err(Error::InvalidOperatorExpression);
             }
 
-            let a = eval(&nodes[2], env.clone())?;
-            let b = eval(&nodes[3], env.clone())?;
+            let a = eval(&nodes[1], env.clone())?;
+            let b = eval(&nodes[2], env.clone())?;
             let (a, b) = match (a, b) {
                 (Value::Number(a), Value::Number(b)) => (a, b),
-                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+                _ => return Err(Error::InvalidOperandValue),
             };
 
             let v = match op.as_str() {
@@ -326,25 +330,25 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
             Ok(Value::Boolean(v))
         }
         "not" => {
-            if nodes.len() != 3 {
-                return Err(Error::InvalidPrimitiveOperation);
+            if nodes.len() != 2 {
+                return Err(Error::InvalidOperatorExpression);
             }
 
-            match eval(&nodes[2], env.clone())? {
+            match eval(&nodes[1], env.clone())? {
                 Value::Boolean(a) => Ok(Value::Boolean(!a)),
-                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+                _ => return Err(Error::InvalidOperandValue),
             }
         }
         "and" | "or" => {
-            if nodes.len() != 4 {
-                return Err(Error::InvalidPrimitiveOperation);
+            if nodes.len() != 3 {
+                return Err(Error::InvalidOperatorExpression);
             }
 
-            let a = eval(&nodes[2], env.clone())?;
-            let b = eval(&nodes[3], env.clone())?;
+            let a = eval(&nodes[1], env.clone())?;
+            let b = eval(&nodes[2], env.clone())?;
             let (a, b) = match (a, b) {
                 (Value::Boolean(a), Value::Boolean(b)) => (a, b),
-                _ => return Err(Error::InvalidPrimitiveOperation), // should be a runtime exception
+                _ => return Err(Error::InvalidOperandValue),
             };
 
             let v = match op.as_str() {
@@ -355,7 +359,7 @@ fn eval_primitive(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
 
             Ok(Value::Boolean(v))
         }
-        _ => return Err(Error::InvalidPrimitiveOperation),
+        _ => return Err(Error::InvalidOperatorExpression),
     }
 }
 
@@ -404,46 +408,46 @@ fn test_eval() {
         ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
         ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
         // closures (lambdas and applications)
-        ("((lambda (a b) (primitive + a b)) 1 2)", Value::Number(3.0)),
+        ("((lambda (a b) (+ a b)) 1 2)", Value::Number(3.0)),
         (
-            "((lambda (a b) (primitive + a b) 4.0) 1 2)", // multibody lambda
+            "((lambda (a b) (+ a b) 4.0) 1 2)", // multibody lambda
             Value::Number(4.0),
         ),
         // local bindings (let)
         ("(let ((x 1)) x)", Value::Number(1.0)),
         ("(let ((x 1)) x 2)", Value::Number(2.0)),
-        ("(let ((x 1) (y 2)) (primitive + x y))", Value::Number(3.0)),
-        ("(let ((x (primitive + 1 3))) x)", Value::Number(4.0)),
+        ("(let ((x 1) (y 2)) (+ x y))", Value::Number(3.0)),
+        ("(let ((x (+ 1 3))) x)", Value::Number(4.0)),
         // primitives
-        ("(primitive + 1 1)", Value::Number(2.0)),
-        ("(primitive - 2 1)", Value::Number(1.0)),
-        ("(primitive * 2 3)", Value::Number(6.0)),
-        ("(primitive / 6 2)", Value::Number(3.0)),
-        ("(primitive = 1 1)", Value::Boolean(true)),
-        ("(primitive = 0 0)", Value::Boolean(true)),
-        ("(primitive = 1 0)", Value::Boolean(false)),
-        ("(primitive = #t #t)", Value::Boolean(true)),
-        ("(primitive = #f #f)", Value::Boolean(true)),
-        ("(primitive = #t #f)", Value::Boolean(false)),
-        (r#"(primitive = "a" "a")"#, Value::Boolean(true)),
-        (r#"(primitive = "b" "b")"#, Value::Boolean(true)),
-        (r#"(primitive = "a" "b")"#, Value::Boolean(false)),
-        ("(primitive > 1 1)", Value::Boolean(false)),
-        ("(primitive > 1 0)", Value::Boolean(true)),
-        ("(primitive > 0 1)", Value::Boolean(false)),
-        ("(primitive < 1 1)", Value::Boolean(false)),
-        ("(primitive < 1 0)", Value::Boolean(false)),
-        ("(primitive < 0 1)", Value::Boolean(true)),
-        ("(primitive not #t)", Value::Boolean(false)),
-        ("(primitive not #f)", Value::Boolean(true)),
-        ("(primitive and #f #f)", Value::Boolean(false)),
-        ("(primitive and #f #t)", Value::Boolean(false)),
-        ("(primitive and #t #f)", Value::Boolean(false)),
-        ("(primitive and #t #t)", Value::Boolean(true)),
-        ("(primitive or #f #f)", Value::Boolean(false)),
-        ("(primitive or #f #t)", Value::Boolean(true)),
-        ("(primitive or #t #f)", Value::Boolean(true)),
-        ("(primitive or #t #t)", Value::Boolean(true)),
+        ("(+ 1 1)", Value::Number(2.0)),
+        ("(- 2 1)", Value::Number(1.0)),
+        ("(* 2 3)", Value::Number(6.0)),
+        ("(/ 6 2)", Value::Number(3.0)),
+        ("(= 1 1)", Value::Boolean(true)),
+        ("(= 0 0)", Value::Boolean(true)),
+        ("(= 1 0)", Value::Boolean(false)),
+        ("(= #t #t)", Value::Boolean(true)),
+        ("(= #f #f)", Value::Boolean(true)),
+        ("(= #t #f)", Value::Boolean(false)),
+        (r#"(= "a" "a")"#, Value::Boolean(true)),
+        (r#"(= "b" "b")"#, Value::Boolean(true)),
+        (r#"(= "a" "b")"#, Value::Boolean(false)),
+        ("(> 1 1)", Value::Boolean(false)),
+        ("(> 1 0)", Value::Boolean(true)),
+        ("(> 0 1)", Value::Boolean(false)),
+        ("(< 1 1)", Value::Boolean(false)),
+        ("(< 1 0)", Value::Boolean(false)),
+        ("(< 0 1)", Value::Boolean(true)),
+        ("(not #t)", Value::Boolean(false)),
+        ("(not #f)", Value::Boolean(true)),
+        ("(and #f #f)", Value::Boolean(false)),
+        ("(and #f #t)", Value::Boolean(false)),
+        ("(and #t #f)", Value::Boolean(false)),
+        ("(and #t #t)", Value::Boolean(true)),
+        ("(or #f #f)", Value::Boolean(false)),
+        ("(or #f #t)", Value::Boolean(true)),
+        ("(or #t #f)", Value::Boolean(true)),
+        ("(or #t #t)", Value::Boolean(true)),
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
