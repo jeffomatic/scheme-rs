@@ -34,6 +34,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Closure(Vec<String>, Vec<ExprPtr>, EnvPtr),
+    Pair(ValuePtr, ValuePtr),
 }
 
 impl Value {
@@ -58,6 +59,7 @@ impl fmt::Debug for Value {
             Self::Number(v) => write!(f, "Value::Number({})", v),
             Self::String(v) => write!(f, "Value::String({})", v),
             Self::Closure(formals, ..) => write!(f, "Value::Closure({:?})", formals),
+            Self::Pair(a, b) => write!(f, "Value::Pair({:?}, {:?})", &*a.borrow(), &*b.borrow()),
         }
     }
 }
@@ -71,6 +73,7 @@ impl cmp::PartialEq for Value {
             (Self::Number(a), Self::Number(b)) => a.eq(b),
             (Self::String(a), Self::String(b)) => a == b,
             (Self::Closure(..), Self::Closure(..)) => false, // can't compare closures
+            (Self::Pair(a1, b1), Self::Pair(a2, b2)) => a1.eq(a2) && b1.eq(b2),
             _ => false,
         }
     }
@@ -206,14 +209,22 @@ fn eval_unary_operation(
     operand: ExprPtr,
     env: EnvPtr,
 ) -> Result<ValuePtr, Error> {
+    let valptr = eval(operand, env)?;
+    let val = &*valptr.borrow();
+
     match op {
         UnaryOperator::Not => {
-            let b = eval(operand, env)?
-                .borrow()
-                .as_bool()
-                .ok_or(Error::InvalidType)?;
+            let b = val.as_bool().ok_or(Error::InvalidType)?;
             Ok(Value::Boolean(!b).into_ptr())
         }
+        UnaryOperator::Car => match val {
+            Value::Pair(a, _) => Ok(a.clone()),
+            _ => Err(Error::InvalidType),
+        },
+        UnaryOperator::Cdr => match val {
+            Value::Pair(_, b) => Ok(b.clone()),
+            _ => Err(Error::InvalidType),
+        },
     }
 }
 
@@ -275,6 +286,7 @@ fn eval_binary_operation(
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(*a || *b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
+        BinaryOperator::Cons => Ok(Value::Pair(aptr.clone(), bptr.clone()).into_ptr()),
     }
 }
 
@@ -348,6 +360,12 @@ fn test_eval() {
         ("(or #f #t)", Value::Boolean(true)),
         ("(or #t #f)", Value::Boolean(true)),
         ("(or #t #t)", Value::Boolean(true)),
+        (
+            "(cons 1 2)",
+            Value::Pair(Value::Number(1.0).into_ptr(), Value::Number(2.0).into_ptr()),
+        ),
+        ("(car (cons 1 2))", Value::Number(1.0)),
+        ("(cdr (cons 1 2))", Value::Number(2.0)),
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
