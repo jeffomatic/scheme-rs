@@ -33,7 +33,12 @@ pub enum Value {
     Boolean(bool),
     Number(f64),
     String(String),
-    Closure(Vec<String>, Vec<ExprPtr>, EnvPtr),
+    Closure {
+        formals: Vec<String>,
+        varparam: Option<String>,
+        seq: Vec<ExprPtr>,
+        env: EnvPtr,
+    },
     Pair(ValuePtr, ValuePtr),
 }
 
@@ -48,6 +53,14 @@ impl Value {
             _ => None,
         }
     }
+
+    fn make_list(vals: &[ValuePtr]) -> Value {
+        let mut res = Value::Null;
+        for v in vals.iter().rev() {
+            res = Value::Pair(v.clone(), res.into_ptr());
+        }
+        res
+    }
 }
 
 impl fmt::Debug for Value {
@@ -58,7 +71,13 @@ impl fmt::Debug for Value {
             Self::Boolean(v) => write!(f, "Value::Boolean({})", v),
             Self::Number(v) => write!(f, "Value::Number({})", v),
             Self::String(v) => write!(f, "Value::String({})", v),
-            Self::Closure(formals, ..) => write!(f, "Value::Closure({:?})", formals),
+            Self::Closure {
+                formals, varparam, ..
+            } => write!(
+                f,
+                "Value::Closure(formals: {:?}, varparam: {:?})",
+                formals, varparam
+            ),
             Self::Pair(a, b) => write!(f, "Value::Pair({:?}, {:?})", &*a.borrow(), &*b.borrow()),
         }
     }
@@ -72,7 +91,7 @@ impl cmp::PartialEq for Value {
             (Self::Boolean(a), Self::Boolean(b)) => a == b,
             (Self::Number(a), Self::Number(b)) => a.eq(b),
             (Self::String(a), Self::String(b)) => a == b,
-            (Self::Closure(..), Self::Closure(..)) => false, // can't compare closures
+            (Self::Closure { .. }, Self::Closure { .. }) => false, // can't compare closures
             (Self::Pair(a1, b1), Self::Pair(a2, b2)) => a1.eq(a2) && b1.eq(b2),
             _ => false,
         }
@@ -136,7 +155,12 @@ pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
             on_false,
             ..
         } => eval_if(condition.clone(), on_true.clone(), on_false.clone(), env),
-        Expr::Lambda { formals, seq, .. } => Ok(eval_lambda(&formals, &seq, env)),
+        Expr::Lambda {
+            formals,
+            varparam,
+            seq,
+            ..
+        } => Ok(eval_lambda(&formals, &varparam, &seq, env)),
         Expr::Let {
             definitions, seq, ..
         } => eval_let(&definitions, &seq, env),
@@ -187,8 +211,19 @@ fn eval_if(
     }
 }
 
-fn eval_lambda(formals: &[String], seq: &[ExprPtr], env: EnvPtr) -> ValuePtr {
-    Value::Closure(formals.to_vec(), seq.to_vec(), env).into_ptr()
+fn eval_lambda(
+    formals: &[String],
+    varparam: &Option<String>,
+    seq: &[ExprPtr],
+    env: EnvPtr,
+) -> ValuePtr {
+    Value::Closure {
+        formals: formals.to_vec(),
+        varparam: varparam.clone(),
+        seq: seq.to_vec(),
+        env,
+    }
+    .into_ptr()
 }
 
 fn eval_let(
@@ -291,24 +326,50 @@ fn eval_binary_operation(
 }
 
 fn eval_application(func: ExprPtr, args: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
+    // evaluate function
     let valptr = eval(func, env.clone())?;
     let val = &*valptr.borrow();
-
-    let (formals, seq, closure_env) = match val {
-        Value::Closure(f, s, ce) => (f, s, ce),
+    let (formals, varparam, seq, closure_env) = match val {
+        Value::Closure {
+            formals,
+            varparam,
+            seq,
+            env,
+        } => (formals, varparam, seq, env),
         _ => return Err(Error::InvalidType),
     };
 
-    if formals.len() != args.len() {
+    // too many formals
+    if formals.len() > args.len() {
         return Err(Error::InvalidApplication);
     }
 
-    let mut call_env = Env::extend(closure_env.clone());
-    for (i, symbol) in formals.iter().enumerate() {
-        call_env.bind(&symbol, eval(args[i].clone(), env.clone())?);
+    // too few formals
+    if formals.len() < args.len() && varparam.is_none() {
+        return Err(Error::InvalidApplication);
     }
 
-    eval_sequence(&seq, call_env.into_ptr())
+    // evaluate arguments
+    let mut argvals = Vec::new();
+    for a in args.iter() {
+        argvals.push(eval(a.clone(), env.clone())?);
+    }
+
+    // create environment for application
+    let mut apply_env = Env::extend(closure_env.clone());
+
+    // add formal params to environment
+    for (i, symbol) in formals.iter().enumerate() {
+        apply_env.bind(&symbol, argvals[i].clone());
+    }
+
+    // create a list value for varargs, if necessary
+    if let Some(symbol) = varparam {
+        let vals = &argvals[formals.len()..argvals.len()];
+        apply_env.bind(&symbol, Value::make_list(&vals.to_vec()).into_ptr());
+    }
+
+    eval_sequence(&seq, apply_env.into_ptr())
 }
 
 #[test]
@@ -369,6 +430,32 @@ fn test_eval() {
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
+        // variadic arguments
+        (
+            "
+            (define f (lambda (a . rest) a))
+            (f 1 2 3)
+            ",
+            Value::Number(1.0),
+        ),
+        (
+            "
+            (define f (lambda (a . rest) rest))
+            (f 1 2 3)
+            ",
+            Value::make_list(&[Value::Number(2.0).into_ptr(), Value::Number(3.0).into_ptr()]),
+        ),
+        (
+            "
+            (define f (lambda (. rest) rest))
+            (f 1 2 3)
+            ",
+            Value::make_list(&[
+                Value::Number(1.0).into_ptr(),
+                Value::Number(2.0).into_ptr(),
+                Value::Number(3.0).into_ptr(),
+            ]),
+        ),
         // fibonacci with define
         (
             "
@@ -406,7 +493,6 @@ fn test_eval() {
     ];
 
     for c in cases.iter() {
-        println!("{}", c.0);
         assert_eq!(
             eval_sequence(&parse(&scan(c.0).unwrap()).unwrap(), Env::root().into_ptr(),)
                 .unwrap()

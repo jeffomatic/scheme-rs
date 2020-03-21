@@ -92,6 +92,7 @@ pub enum Expr {
     },
     Lambda {
         formals: Vec<String>,
+        varparam: Option<String>,
         seq: Vec<ExprPtr>,
         span: SrcSpan,
     },
@@ -281,12 +282,35 @@ fn parse_lambda(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
     };
 
     let mut formals = Vec::new();
+    let mut varparam = None;
+
     match first {
         Sexpr::Atom(_) => return Err(Error::InvalidLambda(span)),
-        Sexpr::Compound(children, _) => {
-            for c in children.iter() {
-                match extract_identifier(c) {
-                    Some(s) => formals.push(s),
+        Sexpr::Compound(formal_sexprs, _) => {
+            let mut end_formals = formal_sexprs.len();
+
+            // Check for variadic arguments
+            if formal_sexprs.len() > 1 {
+                let next_to_last = &formal_sexprs[formal_sexprs.len() - 2];
+                let last = &formal_sexprs[formal_sexprs.len() - 1];
+                if let (Some(next_to_last), Some(last)) =
+                    (extract_identifier(next_to_last), extract_identifier(last))
+                {
+                    if next_to_last == "." {
+                        varparam = Some(last);
+                        end_formals = formal_sexprs.len() - 2;
+                    }
+                }
+            }
+
+            for f in &formal_sexprs[0..end_formals] {
+                match extract_identifier(f) {
+                    Some(s) => {
+                        if s == "." {
+                            return Err(Error::InvalidLambda(span)); // TODO: replace with symbol validator
+                        }
+                        formals.push(s.to_string());
+                    }
                     None => return Err(Error::InvalidLambda(span)),
                 }
             }
@@ -295,6 +319,7 @@ fn parse_lambda(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
 
     Ok(Expr::Lambda {
         formals,
+        varparam,
         seq: parse_sexpr_seq(rest)?,
         span,
     })
