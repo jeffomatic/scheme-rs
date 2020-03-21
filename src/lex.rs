@@ -42,7 +42,7 @@ struct Stream<'a> {
 }
 
 impl Stream<'_> {
-    fn new<'a>(s: &'a str) -> Stream<'a> {
+    fn new(s: &str) -> Stream {
         Stream {
             iter: s.chars(),
             buf: VecDeque::new(),
@@ -78,7 +78,7 @@ impl Stream<'_> {
     fn take(&mut self) -> (char, SrcPos) {
         let res = self.peek(0).unwrap();
         self.advance();
-        return res;
+        res
     }
 
     fn is_end(&mut self) -> bool {
@@ -220,7 +220,7 @@ fn number(stream: &mut Stream) -> Result<Token, Error> {
     })
 }
 
-pub fn scan<'a>(src: &'a str) -> Result<Vec<Token>, Error> {
+pub fn scan(src: &str) -> Result<Vec<Token>, Error> {
     let mut stream = Stream::new(src);
     let mut tokens = Vec::new();
 

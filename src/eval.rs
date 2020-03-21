@@ -87,15 +87,15 @@ impl Env {
         }
     }
 
-    fn bind(&mut self, symbol: &String, val: Value) {
-        self.symbols.insert(symbol.clone(), val);
+    fn bind(&mut self, symbol: &str, val: Value) {
+        self.symbols.insert(symbol.to_string(), val);
     }
 
-    fn lookup(&self, symbol: &String) -> Option<Value> {
+    fn lookup(&self, symbol: &str) -> Option<Value> {
         match self.symbols.get(symbol) {
             Some(v) => Some(v.clone()), // todo: values should be smart pointers
             None => match &self.parent {
-                Some(p) => p.borrow().lookup(symbol),
+                Some(p) => p.borrow().lookup(&symbol.to_string()),
                 None => None,
             },
         }
@@ -104,59 +104,27 @@ impl Env {
 
 pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
     match &*expr.borrow() {
-        Expr::Null { span: _ } => Ok(Value::Null),
-        Expr::Boolean {
-            underlying,
-            span: _,
-        } => Ok(Value::Boolean(*underlying)),
-        Expr::String {
-            underlying,
-            span: _,
-        } => Ok(Value::String(underlying.clone())),
-        Expr::Number {
-            underlying,
-            span: _,
-        } => Ok(Value::Number(*underlying)),
-        Expr::Reference { literal, span: _ } => eval_reference(&literal, env.clone()),
-        Expr::Define {
-            symbol,
-            expr,
-            span: _,
-        } => eval_define(&symbol, expr.clone(), env.clone()),
+        Expr::Null { .. } => Ok(Value::Null),
+        Expr::Boolean { underlying, .. } => Ok(Value::Boolean(*underlying)),
+        Expr::String { underlying, .. } => Ok(Value::String(underlying.clone())),
+        Expr::Number { underlying, .. } => Ok(Value::Number(*underlying)),
+        Expr::Reference { literal, .. } => eval_reference(&literal, env),
+        Expr::Define { symbol, expr, .. } => eval_define(&symbol, expr.clone(), env),
         Expr::If {
             condition,
             on_true,
             on_false,
-            span: _,
-        } => eval_if(
-            condition.clone(),
-            on_true.clone(),
-            on_false.clone(),
-            env.clone(),
-        ),
-        Expr::Lambda {
-            formals,
-            seq,
-            span: _,
-        } => Ok(eval_lambda(&formals, &seq, env.clone())),
+            ..
+        } => eval_if(condition.clone(), on_true.clone(), on_false.clone(), env),
+        Expr::Lambda { formals, seq, .. } => Ok(eval_lambda(&formals, &seq, env)),
         Expr::Let {
-            definitions,
-            seq,
-            span: _,
-        } => eval_let(&definitions, &seq, env.clone()),
-        Expr::UnaryOperation {
-            op,
-            operand,
-            span: _,
-        } => eval_unary_operation(*op, operand.clone(), env.clone()),
-        Expr::BinaryOperation { op, a, b, span: _ } => {
-            eval_binary_operation(*op, a.clone(), b.clone(), env.clone())
+            definitions, seq, ..
+        } => eval_let(&definitions, &seq, env),
+        Expr::UnaryOperation { op, operand, .. } => eval_unary_operation(*op, operand.clone(), env),
+        Expr::BinaryOperation { op, a, b, .. } => {
+            eval_binary_operation(*op, a.clone(), b.clone(), env)
         }
-        Expr::Application {
-            func,
-            args,
-            span: _,
-        } => eval_application(func.clone(), &args, env.clone()),
+        Expr::Application { func, args, .. } => eval_application(func.clone(), &args, env),
     }
 }
 
@@ -168,16 +136,16 @@ fn eval_sequence(exprs: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Result<Value, Erro
     Ok(tail_value)
 }
 
-fn eval_reference(symbol: &String, env: EnvPtr) -> Result<Value, Error> {
-    match env.borrow().lookup(symbol) {
+fn eval_reference(symbol: &str, env: EnvPtr) -> Result<Value, Error> {
+    match env.borrow().lookup(&symbol.to_string()) {
         Some(v) => Ok(v),
         None => Err(Error::UndefinedSymbol(symbol.to_string())),
     }
 }
 
-fn eval_define(symbol: &String, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
+fn eval_define(symbol: &str, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
     env.borrow_mut()
-        .bind(&symbol, eval(expr.clone(), env.clone())?);
+        .bind(&symbol.to_string(), eval(expr, env.clone())?);
     Ok(Value::Void)
 }
 
@@ -193,18 +161,14 @@ fn eval_if(
     };
 
     if predicate {
-        eval(on_true, env.clone())
+        eval(on_true, env)
     } else {
-        eval(on_false, env.clone())
+        eval(on_false, env)
     }
 }
 
 fn eval_lambda(formals: &[String], seq: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Value {
-    Value::Closure(
-        formals.iter().cloned().collect(),
-        seq.iter().cloned().collect(),
-        env.clone(),
-    )
+    Value::Closure(formals.to_vec(), seq.to_vec(), env)
 }
 
 fn eval_let(
@@ -226,7 +190,7 @@ fn eval_unary_operation(
     env: EnvPtr,
 ) -> Result<Value, Error> {
     match op {
-        UnaryOperator::Not => match eval(operand.clone(), env.clone())? {
+        UnaryOperator::Not => match eval(operand, env)? {
             Value::Boolean(b) => Ok(Value::Boolean(!b)),
             _ => return Err(Error::InvalidType),
         },
@@ -239,8 +203,8 @@ fn eval_binary_operation(
     b: Rc<RefCell<Expr>>,
     env: EnvPtr,
 ) -> Result<Value, Error> {
-    let a = eval(a.clone(), env.clone())?;
-    let b = eval(b.clone(), env.clone())?;
+    let a = eval(a, env.clone())?;
+    let b = eval(b, env)?;
 
     match op {
         BinaryOperator::Add => match (a, b) {
@@ -261,7 +225,7 @@ fn eval_binary_operation(
         },
         BinaryOperator::Eq => match (a, b) {
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a == b)),
             _ => Err(Error::InvalidType),
         },
@@ -297,7 +261,7 @@ fn eval_application(
     args: &[Rc<RefCell<Expr>>],
     env: EnvPtr,
 ) -> Result<Value, Error> {
-    let (formals, seq, closure_env) = match eval(func.clone(), env.clone())? {
+    let (formals, seq, closure_env) = match eval(func, env.clone())? {
         Value::Closure(f, s, ce) => (f, s, ce),
         _ => return Err(Error::InvalidType),
     };
@@ -306,7 +270,7 @@ fn eval_application(
         return Err(Error::InvalidApplication);
     }
 
-    let mut call_env = Env::extend(closure_env.clone());
+    let mut call_env = Env::extend(closure_env);
     for (i, symbol) in formals.iter().enumerate() {
         call_env.bind(&symbol, eval(args[i].clone(), env.clone())?);
     }
