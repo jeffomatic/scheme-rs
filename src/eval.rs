@@ -7,7 +7,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use super::lex::scan;
-use super::parse::{parse, BinaryOperator, Expr, UnaryOperator};
+use super::parse::{parse, BinaryOperator, Expr, ExprPtr, UnaryOperator};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -34,7 +34,7 @@ pub enum Value {
     Boolean(bool),
     Number(f64),
     String(String),
-    Closure(Vec<String>, Vec<Rc<RefCell<Expr>>>, EnvPtr),
+    Closure(Vec<String>, Vec<ExprPtr>, EnvPtr),
 }
 
 impl Value {
@@ -117,7 +117,7 @@ impl Env {
     }
 }
 
-pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<ValuePtr, Error> {
+pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
     match &*expr.borrow() {
         Expr::Null { .. } => Ok(Value::Null.into_ptr()),
         Expr::Boolean { underlying, .. } => Ok(Value::Boolean(*underlying).into_ptr()),
@@ -143,7 +143,7 @@ pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<ValuePtr, Error> {
     }
 }
 
-fn eval_sequence(exprs: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Result<ValuePtr, Error> {
+fn eval_sequence(exprs: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
     let mut tail_value = Rc::new(RefCell::new(Value::Void));
     for e in exprs.iter() {
         tail_value = eval(e.clone(), env.clone())?;
@@ -158,16 +158,16 @@ fn eval_reference(symbol: &str, env: EnvPtr) -> Result<ValuePtr, Error> {
     }
 }
 
-fn eval_define(symbol: &str, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<ValuePtr, Error> {
+fn eval_define(symbol: &str, expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
     env.borrow_mut()
         .bind(&symbol.to_string(), eval(expr, env.clone())?);
     Ok(Value::Void.into_ptr())
 }
 
 fn eval_if(
-    condition: Rc<RefCell<Expr>>,
-    on_true: Rc<RefCell<Expr>>,
-    on_false: Rc<RefCell<Expr>>,
+    condition: ExprPtr,
+    on_true: ExprPtr,
+    on_false: ExprPtr,
     env: EnvPtr,
 ) -> Result<ValuePtr, Error> {
     let predicate = eval(condition, env.clone())?
@@ -182,13 +182,13 @@ fn eval_if(
     }
 }
 
-fn eval_lambda(formals: &[String], seq: &[Rc<RefCell<Expr>>], env: EnvPtr) -> ValuePtr {
+fn eval_lambda(formals: &[String], seq: &[ExprPtr], env: EnvPtr) -> ValuePtr {
     Value::Closure(formals.to_vec(), seq.to_vec(), env).into_ptr()
 }
 
 fn eval_let(
-    definitions: &[(String, Rc<RefCell<Expr>>)],
-    seq: &[Rc<RefCell<Expr>>],
+    definitions: &[(String, ExprPtr)],
+    seq: &[ExprPtr],
     env: EnvPtr,
 ) -> Result<ValuePtr, Error> {
     let mut local_env = Env::extend(env.clone());
@@ -201,7 +201,7 @@ fn eval_let(
 
 fn eval_unary_operation(
     op: UnaryOperator,
-    operand: Rc<RefCell<Expr>>,
+    operand: ExprPtr,
     env: EnvPtr,
 ) -> Result<ValuePtr, Error> {
     match op {
@@ -217,8 +217,8 @@ fn eval_unary_operation(
 
 fn eval_binary_operation(
     op: BinaryOperator,
-    a: Rc<RefCell<Expr>>,
-    b: Rc<RefCell<Expr>>,
+    a: ExprPtr,
+    b: ExprPtr,
     env: EnvPtr,
 ) -> Result<ValuePtr, Error> {
     let aptr = eval(a, env.clone())?;
@@ -276,11 +276,7 @@ fn eval_binary_operation(
     }
 }
 
-fn eval_application(
-    func: Rc<RefCell<Expr>>,
-    args: &[Rc<RefCell<Expr>>],
-    env: EnvPtr,
-) -> Result<ValuePtr, Error> {
+fn eval_application(func: ExprPtr, args: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
     let valptr = eval(func, env.clone())?;
     let val = &*valptr.borrow();
 

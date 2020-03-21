@@ -75,42 +75,50 @@ pub enum Expr {
     },
     Define {
         symbol: String,
-        expr: Rc<RefCell<Expr>>,
+        expr: ExprPtr,
         span: SrcSpan,
     },
     If {
-        condition: Rc<RefCell<Expr>>,
-        on_true: Rc<RefCell<Expr>>,
-        on_false: Rc<RefCell<Expr>>,
+        condition: ExprPtr,
+        on_true: ExprPtr,
+        on_false: ExprPtr,
         span: SrcSpan,
     },
     Lambda {
         formals: Vec<String>,
-        seq: Vec<Rc<RefCell<Expr>>>,
+        seq: Vec<ExprPtr>,
         span: SrcSpan,
     },
     Let {
-        definitions: Vec<(String, Rc<RefCell<Expr>>)>,
-        seq: Vec<Rc<RefCell<Expr>>>,
+        definitions: Vec<(String, ExprPtr)>,
+        seq: Vec<ExprPtr>,
         span: SrcSpan,
     },
     UnaryOperation {
         op: UnaryOperator,
-        operand: Rc<RefCell<Expr>>,
+        operand: ExprPtr,
         span: SrcSpan,
     },
     BinaryOperation {
         op: BinaryOperator,
-        a: Rc<RefCell<Expr>>,
-        b: Rc<RefCell<Expr>>,
+        a: ExprPtr,
+        b: ExprPtr,
         span: SrcSpan,
     },
     Application {
-        func: Rc<RefCell<Expr>>,
-        args: Vec<Rc<RefCell<Expr>>>,
+        func: ExprPtr,
+        args: Vec<ExprPtr>,
         span: SrcSpan,
     },
 }
+
+impl Expr {
+    fn into_ptr(self) -> ExprPtr {
+        Rc::new(RefCell::new(self))
+    }
+}
+
+pub type ExprPtr = Rc<RefCell<Expr>>;
 
 fn parse_sexpr(sexpr: &Sexpr) -> Result<Expr, Error> {
     match sexpr {
@@ -119,10 +127,10 @@ fn parse_sexpr(sexpr: &Sexpr) -> Result<Expr, Error> {
     }
 }
 
-pub fn parse_sexpr_seq(sexpr_seq: &[Sexpr]) -> Result<Vec<Rc<RefCell<Expr>>>, Error> {
+pub fn parse_sexpr_seq(sexpr_seq: &[Sexpr]) -> Result<Vec<ExprPtr>, Error> {
     let mut exprs = Vec::new();
     for sexpr in sexpr_seq.iter() {
-        exprs.push(Rc::new(RefCell::new(parse_sexpr(sexpr)?)));
+        exprs.push(parse_sexpr(sexpr)?.into_ptr());
     }
 
     Ok(exprs)
@@ -161,7 +169,7 @@ fn parse_compound(children: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
         None => Ok(Expr::Null { span }),
         Some((first, rest)) => match first {
             Sexpr::Compound(func_children, func_span) => Ok(Expr::Application {
-                func: Rc::new(RefCell::new(parse_compound(func_children, *func_span)?)),
+                func: parse_compound(func_children, *func_span)?.into_ptr(),
                 args: parse_sexpr_seq(rest)?,
                 span,
             }),
@@ -178,10 +186,11 @@ fn parse_compound(children: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
                             "lambda" => Ok(parse_lambda(rest, span)?),
                             "let" => Ok(parse_let(rest, span)?),
                             _ => Ok(Expr::Application {
-                                func: Rc::new(RefCell::new(Expr::Reference {
+                                func: Expr::Reference {
                                     literal: tok.literal.clone(),
                                     span: tok.span,
-                                })),
+                                }
+                                .into_ptr(),
                                 args: parse_sexpr_seq(rest)?,
                                 span,
                             }),
@@ -201,7 +210,7 @@ fn parse_unary_operation(op: UnaryOperator, args: &[Sexpr], span: SrcSpan) -> Re
 
     Ok(Expr::UnaryOperation {
         op,
-        operand: Rc::new(RefCell::new(parse_sexpr(&args[0])?)),
+        operand: parse_sexpr(&args[0])?.into_ptr(),
         span,
     })
 }
@@ -217,8 +226,8 @@ fn parse_binary_operation(
 
     Ok(Expr::BinaryOperation {
         op,
-        a: Rc::new(RefCell::new(parse_sexpr(&args[0])?)),
-        b: Rc::new(RefCell::new(parse_sexpr(&args[1])?)),
+        a: parse_sexpr(&args[0])?.into_ptr(),
+        b: parse_sexpr(&args[1])?.into_ptr(),
         span,
     })
 }
@@ -242,7 +251,7 @@ fn parse_define(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
         Some(s) => s,
         None => return Err(Error::InvalidDefine(span)),
     };
-    let expr = Rc::new(RefCell::new(parse_sexpr(&args[1])?));
+    let expr = parse_sexpr(&args[1])?.into_ptr();
     Ok(Expr::Define { symbol, expr, span })
 }
 
@@ -252,9 +261,9 @@ fn parse_if(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
     }
 
     Ok(Expr::If {
-        condition: Rc::new(RefCell::new(parse_sexpr(&args[0])?)),
-        on_true: Rc::new(RefCell::new(parse_sexpr(&args[1])?)),
-        on_false: Rc::new(RefCell::new(parse_sexpr(&args[2])?)),
+        condition: parse_sexpr(&args[0])?.into_ptr(),
+        on_true: parse_sexpr(&args[1])?.into_ptr(),
+        on_false: parse_sexpr(&args[2])?.into_ptr(),
         span,
     })
 }
@@ -309,7 +318,7 @@ fn parse_let(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
                         };
                         let expr = parse_sexpr(&def_children[1])?;
 
-                        definitions.push((symbol, Rc::new(RefCell::new(expr))));
+                        definitions.push((symbol, expr.into_ptr()));
                     }
                 }
             }
