@@ -37,6 +37,21 @@ pub enum Value {
     Closure(Vec<String>, Vec<Rc<RefCell<Expr>>>, EnvPtr),
 }
 
+impl Value {
+    fn into_ptr(self) -> ValuePtr {
+        Rc::new(RefCell::new(self))
+    }
+
+    fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+}
+
+type ValuePtr = Rc<RefCell<Value>>;
+
 // A wrapper for Rc<RefCell<Env>> that is Debug and PartialEq. These traits are
 // necessary so Value::Closure can satisfy those traits.
 #[derive(Clone)]
@@ -68,7 +83,7 @@ impl cmp::PartialEq for EnvPtr {
 }
 
 pub struct Env {
-    symbols: HashMap<String, Value>, // TODO: Value should be Rc<RefCell<Value>>
+    symbols: HashMap<String, ValuePtr>,
     parent: Option<EnvPtr>,
 }
 
@@ -87,11 +102,11 @@ impl Env {
         }
     }
 
-    fn bind(&mut self, symbol: &str, val: Value) {
+    fn bind(&mut self, symbol: &str, val: ValuePtr) {
         self.symbols.insert(symbol.to_string(), val);
     }
 
-    fn lookup(&self, symbol: &str) -> Option<Value> {
+    fn lookup(&self, symbol: &str) -> Option<ValuePtr> {
         match self.symbols.get(symbol) {
             Some(v) => Some(v.clone()), // todo: values should be smart pointers
             None => match &self.parent {
@@ -102,12 +117,12 @@ impl Env {
     }
 }
 
-pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
+pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<ValuePtr, Error> {
     match &*expr.borrow() {
-        Expr::Null { .. } => Ok(Value::Null),
-        Expr::Boolean { underlying, .. } => Ok(Value::Boolean(*underlying)),
-        Expr::String { underlying, .. } => Ok(Value::String(underlying.clone())),
-        Expr::Number { underlying, .. } => Ok(Value::Number(*underlying)),
+        Expr::Null { .. } => Ok(Value::Null.into_ptr()),
+        Expr::Boolean { underlying, .. } => Ok(Value::Boolean(*underlying).into_ptr()),
+        Expr::String { underlying, .. } => Ok(Value::String(underlying.clone()).into_ptr()),
+        Expr::Number { underlying, .. } => Ok(Value::Number(*underlying).into_ptr()),
         Expr::Reference { literal, .. } => eval_reference(&literal, env),
         Expr::Define { symbol, expr, .. } => eval_define(&symbol, expr.clone(), env),
         Expr::If {
@@ -128,25 +143,25 @@ pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
     }
 }
 
-fn eval_sequence(exprs: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Result<Value, Error> {
-    let mut tail_value = Value::Void;
+fn eval_sequence(exprs: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Result<ValuePtr, Error> {
+    let mut tail_value = Rc::new(RefCell::new(Value::Void));
     for e in exprs.iter() {
         tail_value = eval(e.clone(), env.clone())?;
     }
     Ok(tail_value)
 }
 
-fn eval_reference(symbol: &str, env: EnvPtr) -> Result<Value, Error> {
+fn eval_reference(symbol: &str, env: EnvPtr) -> Result<ValuePtr, Error> {
     match env.borrow().lookup(&symbol.to_string()) {
         Some(v) => Ok(v),
         None => Err(Error::UndefinedSymbol(symbol.to_string())),
     }
 }
 
-fn eval_define(symbol: &str, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
+fn eval_define(symbol: &str, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<ValuePtr, Error> {
     env.borrow_mut()
         .bind(&symbol.to_string(), eval(expr, env.clone())?);
-    Ok(Value::Void)
+    Ok(Value::Void.into_ptr())
 }
 
 fn eval_if(
@@ -154,11 +169,11 @@ fn eval_if(
     on_true: Rc<RefCell<Expr>>,
     on_false: Rc<RefCell<Expr>>,
     env: EnvPtr,
-) -> Result<Value, Error> {
-    let predicate = match eval(condition, env.clone())? {
-        Value::Boolean(b) => b,
-        _ => return Err(Error::InvalidType),
-    };
+) -> Result<ValuePtr, Error> {
+    let predicate = eval(condition, env.clone())?
+        .borrow()
+        .as_bool()
+        .ok_or(Error::InvalidType)?;
 
     if predicate {
         eval(on_true, env)
@@ -167,15 +182,15 @@ fn eval_if(
     }
 }
 
-fn eval_lambda(formals: &[String], seq: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Value {
-    Value::Closure(formals.to_vec(), seq.to_vec(), env)
+fn eval_lambda(formals: &[String], seq: &[Rc<RefCell<Expr>>], env: EnvPtr) -> ValuePtr {
+    Value::Closure(formals.to_vec(), seq.to_vec(), env).into_ptr()
 }
 
 fn eval_let(
     definitions: &[(String, Rc<RefCell<Expr>>)],
     seq: &[Rc<RefCell<Expr>>],
     env: EnvPtr,
-) -> Result<Value, Error> {
+) -> Result<ValuePtr, Error> {
     let mut local_env = Env::extend(env.clone());
     for (s, expr) in definitions.iter() {
         local_env.bind(s, eval(expr.clone(), env.clone())?);
@@ -188,12 +203,15 @@ fn eval_unary_operation(
     op: UnaryOperator,
     operand: Rc<RefCell<Expr>>,
     env: EnvPtr,
-) -> Result<Value, Error> {
+) -> Result<ValuePtr, Error> {
     match op {
-        UnaryOperator::Not => match eval(operand, env)? {
-            Value::Boolean(b) => Ok(Value::Boolean(!b)),
-            _ => return Err(Error::InvalidType),
-        },
+        UnaryOperator::Not => {
+            let b = eval(operand, env)?
+                .borrow()
+                .as_bool()
+                .ok_or(Error::InvalidType)?;
+            Ok(Value::Boolean(!b).into_ptr())
+        }
     }
 }
 
@@ -202,55 +220,57 @@ fn eval_binary_operation(
     a: Rc<RefCell<Expr>>,
     b: Rc<RefCell<Expr>>,
     env: EnvPtr,
-) -> Result<Value, Error> {
-    let a = eval(a, env.clone())?;
-    let b = eval(b, env)?;
+) -> Result<ValuePtr, Error> {
+    let aptr = eval(a, env.clone())?;
+    let bptr = eval(b, env)?;
+    let a = &*aptr.borrow();
+    let b = &*bptr.borrow();
 
     match op {
         BinaryOperator::Add => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Sub => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Mul => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Div => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Eq => match (a, b) {
-            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
-            (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b).into_ptr()),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b)).into_ptr()),
+            (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a == b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Gt => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Gte => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a >= b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a >= b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Lt => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Lte => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a <= b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a <= b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::And => match (a, b) {
-            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(*a && *b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Or => match (a, b) {
-            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(*a || *b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
     }
@@ -260,8 +280,11 @@ fn eval_application(
     func: Rc<RefCell<Expr>>,
     args: &[Rc<RefCell<Expr>>],
     env: EnvPtr,
-) -> Result<Value, Error> {
-    let (formals, seq, closure_env) = match eval(func, env.clone())? {
+) -> Result<ValuePtr, Error> {
+    let valptr = eval(func, env.clone())?;
+    let val = &*valptr.borrow();
+
+    let (formals, seq, closure_env) = match val {
         Value::Closure(f, s, ce) => (f, s, ce),
         _ => return Err(Error::InvalidType),
     };
@@ -270,7 +293,7 @@ fn eval_application(
         return Err(Error::InvalidApplication);
     }
 
-    let mut call_env = Env::extend(closure_env);
+    let mut call_env = Env::extend(closure_env.clone());
     for (i, symbol) in formals.iter().enumerate() {
         call_env.bind(&symbol, eval(args[i].clone(), env.clone())?);
     }
@@ -373,8 +396,10 @@ fn test_eval() {
                 &parse(&scan(c.0).unwrap()).unwrap(),
                 EnvPtr::new(Env::root()),
             )
-            .unwrap(),
-            c.1,
+            .unwrap()
+            .borrow()
+            .deref(),
+            &c.1,
             "expression: {}",
             c.0
         );
