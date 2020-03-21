@@ -4,22 +4,16 @@ use std::collections::HashMap;
 use std::error;
 use std::fmt;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::rc::Rc;
 
-use super::lex::{scan, Token, TokenType};
-use super::parse::{parse, Node};
+use super::lex::scan;
+use super::parse::{parse, BinaryOperator, Expr, UnaryOperator};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
-    UndefinedSymbol(Token),
-    InvalidLeafNodeAtCompoundStart(Token),
-    InvalidDefineExpression,   // TODO: add src position
-    InvalidLambdaExpression,   // TODO: add src position
-    InvalidLetExpression,      // TODO: add src position
-    InvalidOperatorExpression, // TODO: add src position
-    InvalidOperandValue,       // TODO: add src position
-    InvalidApplication,        // TODO: add src position
-    InvalidIfExpression,       // TODO: add src position
+    UndefinedSymbol(String),
+    InvalidApplication, // TODO: add src position
+    InvalidType,        // TODO: add src position
 }
 
 impl error::Error for Error {}
@@ -27,14 +21,7 @@ impl error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::UndefinedSymbol(tok) => {
-                write!(f, "undefined symbol {} at {:?}", tok.literal, tok.span)
-            }
-            Self::InvalidLeafNodeAtCompoundStart(tok) => write!(
-                f,
-                "invalid token {} at start of compound node at {:?}",
-                tok.literal, tok.span
-            ),
+            Self::UndefinedSymbol(s) => write!(f, "undefined symbol {} ", s),
             _ => todo!(),
         }
     }
@@ -47,22 +34,22 @@ pub enum Value {
     Boolean(bool),
     Number(f64),
     String(String),
-    Closure(Vec<String>, Vec<Node>, EnvPtr),
+    Closure(Vec<String>, Vec<Rc<RefCell<Expr>>>, EnvPtr),
 }
 
-// A wrapper for Arc<RefCell<Env>> that is Debug and PartialEq. These traits are
+// A wrapper for Rc<RefCell<Env>> that is Debug and PartialEq. These traits are
 // necessary so Value::Closure can satisfy those traits.
 #[derive(Clone)]
-pub struct EnvPtr(Arc<RefCell<Env>>);
+pub struct EnvPtr(Rc<RefCell<Env>>);
 
 impl EnvPtr {
     fn new(env: Env) -> EnvPtr {
-        Self(Arc::new(RefCell::new(env)))
+        Self(Rc::new(RefCell::new(env)))
     }
 }
 
 impl Deref for EnvPtr {
-    type Target = Arc<RefCell<Env>>;
+    type Target = Rc<RefCell<Env>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -81,7 +68,7 @@ impl cmp::PartialEq for EnvPtr {
 }
 
 pub struct Env {
-    symbols: HashMap<String, Value>,
+    symbols: HashMap<String, Value>, // TODO: Value should be Rc<RefCell<Value>>
     parent: Option<EnvPtr>,
 }
 
@@ -115,288 +102,216 @@ impl Env {
     }
 }
 
-pub fn eval(node: &Node, env: EnvPtr) -> Result<Value, Error> {
-    match node {
-        Node::Leaf(tok) => eval_leaf(tok, env),
-        Node::Compound(nodes) => eval_compound(nodes, env),
+pub fn eval(expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
+    match &*expr.borrow() {
+        Expr::Null { span: _ } => Ok(Value::Null),
+        Expr::Boolean {
+            underlying,
+            span: _,
+        } => Ok(Value::Boolean(*underlying)),
+        Expr::String {
+            underlying,
+            span: _,
+        } => Ok(Value::String(underlying.clone())),
+        Expr::Number {
+            underlying,
+            span: _,
+        } => Ok(Value::Number(*underlying)),
+        Expr::Reference { literal, span: _ } => eval_reference(&literal, env.clone()),
+        Expr::Define {
+            symbol,
+            expr,
+            span: _,
+        } => eval_define(&symbol, expr.clone(), env.clone()),
+        Expr::If {
+            condition,
+            on_true,
+            on_false,
+            span: _,
+        } => eval_if(
+            condition.clone(),
+            on_true.clone(),
+            on_false.clone(),
+            env.clone(),
+        ),
+        Expr::Lambda {
+            formals,
+            seq,
+            span: _,
+        } => Ok(eval_lambda(&formals, &seq, env.clone())),
+        Expr::Let {
+            definitions,
+            seq,
+            span: _,
+        } => eval_let(&definitions, &seq, env.clone()),
+        Expr::UnaryOperation {
+            op,
+            operand,
+            span: _,
+        } => eval_unary_operation(*op, operand.clone(), env.clone()),
+        Expr::BinaryOperation { op, a, b, span: _ } => {
+            eval_binary_operation(*op, a.clone(), b.clone(), env.clone())
+        }
+        Expr::Application {
+            func,
+            args,
+            span: _,
+        } => eval_application(func.clone(), &args, env.clone()),
     }
 }
 
-fn eval_sequence(nodes: &[Node], env: EnvPtr) -> Result<Value, Error> {
-    let mut tail_value = Value::Null;
-    for b in nodes.iter() {
-        tail_value = eval(&b, env.clone())?;
+fn eval_sequence(exprs: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Result<Value, Error> {
+    let mut tail_value = Value::Void;
+    for e in exprs.iter() {
+        tail_value = eval(e.clone(), env.clone())?;
     }
     Ok(tail_value)
 }
 
-fn eval_leaf(tok: &Token, env: EnvPtr) -> Result<Value, Error> {
-    match tok.t {
-        TokenType::Identifier => match tok.literal.as_str() {
-            "#t" => Ok(Value::Boolean(true)),
-            "#f" => Ok(Value::Boolean(false)),
-            _ => match env.borrow().lookup(&tok.literal) {
-                Some(v) => Ok(v),
-                None => Err(Error::UndefinedSymbol(tok.clone())),
-            },
-        },
-        TokenType::String => {
-            // remove bounding quotes
-            let s = &tok.literal[1..(tok.literal.len() - 1)];
-            Ok(Value::String(s.to_string()))
-        }
-        TokenType::Number => Ok(Value::Number(tok.literal.parse().unwrap())),
-        _ => panic!("invalid token {:?} in leaf node", tok),
+fn eval_reference(symbol: &String, env: EnvPtr) -> Result<Value, Error> {
+    match env.borrow().lookup(symbol) {
+        Some(v) => Ok(v),
+        None => Err(Error::UndefinedSymbol(symbol.to_string())),
     }
 }
 
-fn eval_compound(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    if nodes.is_empty() {
-        return Ok(Value::Null);
-    }
-
-    match &nodes[0] {
-        Node::Leaf(tok) => match tok.t {
-            TokenType::Identifier => match tok.literal.as_str() {
-                "define" => eval_define(nodes, env),
-                "lambda" => eval_lambda(nodes, env),
-                "let" => eval_let(nodes, env),
-                "if" => eval_if(nodes, env),
-                op if is_operator(op) => eval_operator(nodes, env),
-                _ => eval_application(nodes, env),
-            },
-            _ => Err(Error::InvalidLeafNodeAtCompoundStart(tok.clone())),
-        },
-        Node::Compound(_) => eval_application(nodes, env),
-    }
-}
-
-fn eval_define(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    // TODO: implement function definition version
-    if nodes.len() != 3 {
-        return Err(Error::InvalidDefineExpression);
-    }
-
-    let symbol = match &nodes[1] {
-        Node::Leaf(tok) => match tok.t {
-            TokenType::Identifier => &tok.literal,
-            _ => return Err(Error::InvalidDefineExpression),
-        },
-        _ => return Err(Error::InvalidDefineExpression),
-    };
-
-    let val = eval(&nodes[2], env.clone())?;
-    env.borrow_mut().bind(symbol, val);
-
+fn eval_define(symbol: &String, expr: Rc<RefCell<Expr>>, env: EnvPtr) -> Result<Value, Error> {
+    env.borrow_mut()
+        .bind(&symbol, eval(expr.clone(), env.clone())?);
     Ok(Value::Void)
 }
 
-fn eval_lambda(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    if nodes.len() < 3 {
-        return Err(Error::InvalidLambdaExpression);
-    }
-
-    let mut formals = Vec::new();
-    match &nodes[1] {
-        Node::Compound(formal_nodes) => {
-            for n in formal_nodes.iter() {
-                match n {
-                    Node::Leaf(tok) => match tok.t {
-                        TokenType::Identifier => formals.push(tok.literal.clone()),
-                        _ => return Err(Error::InvalidLambdaExpression),
-                    },
-                    Node::Compound(_) => return Err(Error::InvalidLambdaExpression),
-                }
-            }
-        }
-        Node::Leaf(_) => return Err(Error::InvalidLambdaExpression),
-    };
-
-    let bodies: Vec<Node> = nodes[2..nodes.len()].iter().cloned().collect();
-
-    Ok(Value::Closure(formals, bodies, env.clone()))
-}
-
-fn eval_let(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    if nodes.len() < 3 {
-        return Err(Error::InvalidLetExpression);
-    }
-
-    let bindings = match &nodes[1] {
-        Node::Compound(n) => n,
-        Node::Leaf(_) => return Err(Error::InvalidLetExpression),
-    };
-    let bodies = &nodes[2..nodes.len()];
-
-    // create a new environment and extend with the bindings
-    let next_env = EnvPtr::new(Env::extend(env.clone()));
-    for n in bindings.iter() {
-        let binding = match n {
-            Node::Compound(nodes) => nodes,
-            Node::Leaf(_) => return Err(Error::InvalidLetExpression),
-        };
-        if binding.len() != 2 {
-            return Err(Error::InvalidLetExpression);
-        }
-
-        let identifier = match &binding[0] {
-            Node::Leaf(tok) => match tok.t {
-                TokenType::Identifier => &tok.literal,
-                _ => return Err(Error::InvalidLetExpression),
-            },
-            Node::Compound(_) => return Err(Error::InvalidLetExpression),
-        };
-
-        let value = eval(&binding[1], env.clone())?;
-        next_env.borrow_mut().bind(&identifier, value);
-    }
-
-    eval_sequence(bodies, next_env.clone())
-}
-
-fn is_operator(op: &str) -> bool {
-    match op {
-        "+" | "-" | "*" | "/" | "=" | ">" | ">=" | "<" | "<=" | "not" | "and" | "or" => true,
-        _ => false,
-    }
-}
-
-fn eval_operator(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    // We should have called is_operator() first, so the first node should
-    // reflect the operator.
-    let op = match &nodes[0] {
-        Node::Leaf(tok) => match tok.t {
-            TokenType::Identifier => &tok.literal,
-            _ => unreachable!(),
-        },
-        Node::Compound(_) => unreachable!(),
-    };
-
-    match op.as_str() {
-        "+" | "-" | "*" | "/" => {
-            if nodes.len() != 3 {
-                return Err(Error::InvalidOperatorExpression);
-            }
-
-            let a = match eval(&nodes[1], env.clone())? {
-                Value::Number(v) => v,
-                _ => return Err(Error::InvalidOperandValue),
-            };
-
-            let b = match eval(&nodes[2], env.clone())? {
-                Value::Number(v) => v,
-                _ => return Err(Error::InvalidOperandValue),
-            };
-
-            let v = match op.as_str() {
-                "+" => a + b,
-                "-" => a - b,
-                "*" => a * b,
-                "/" => a / b,
-                _ => unreachable!(),
-            };
-
-            return Ok(Value::Number(v));
-        }
-        "=" => {
-            if nodes.len() != 3 {
-                return Err(Error::InvalidOperatorExpression);
-            }
-
-            let a = eval(&nodes[1], env.clone())?;
-            let b = eval(&nodes[2], env.clone())?;
-            Ok(Value::Boolean(a.eq(&b)))
-        }
-        ">" | ">=" | "<" | "<=" => {
-            if nodes.len() != 3 {
-                return Err(Error::InvalidOperatorExpression);
-            }
-
-            let a = eval(&nodes[1], env.clone())?;
-            let b = eval(&nodes[2], env.clone())?;
-            let (a, b) = match (a, b) {
-                (Value::Number(a), Value::Number(b)) => (a, b),
-                _ => return Err(Error::InvalidOperandValue),
-            };
-
-            let v = match op.as_str() {
-                ">" => a > b,
-                ">=" => a >= b,
-                "<" => a < b,
-                "<=" => a <= b,
-                _ => unreachable!(),
-            };
-
-            Ok(Value::Boolean(v))
-        }
-        "not" => {
-            if nodes.len() != 2 {
-                return Err(Error::InvalidOperatorExpression);
-            }
-
-            match eval(&nodes[1], env.clone())? {
-                Value::Boolean(a) => Ok(Value::Boolean(!a)),
-                _ => return Err(Error::InvalidOperandValue),
-            }
-        }
-        "and" | "or" => {
-            if nodes.len() != 3 {
-                return Err(Error::InvalidOperatorExpression);
-            }
-
-            let a = eval(&nodes[1], env.clone())?;
-            let b = eval(&nodes[2], env.clone())?;
-            let (a, b) = match (a, b) {
-                (Value::Boolean(a), Value::Boolean(b)) => (a, b),
-                _ => return Err(Error::InvalidOperandValue),
-            };
-
-            let v = match op.as_str() {
-                "and" => a && b,
-                "or" => a || b,
-                _ => unreachable!(),
-            };
-
-            Ok(Value::Boolean(v))
-        }
-        _ => return Err(Error::InvalidOperatorExpression),
-    }
-}
-
-fn eval_application(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    let (formals, bodies, procenv) = match eval(&nodes[0], env.clone())? {
-        Value::Closure(f, b, pe) => (f, b, pe),
-        _ => return Err(Error::InvalidApplication),
-    };
-
-    if formals.len() != nodes.len() - 1 {
-        return Err(Error::InvalidApplication);
-    }
-
-    let mut extended = Env::extend(procenv.clone());
-    for (i, symbol) in formals.iter().enumerate() {
-        let argval = eval(&nodes[i + 1], env.clone())?;
-        extended.bind(&symbol, argval);
-    }
-
-    return eval_sequence(&bodies, EnvPtr::new(extended));
-}
-
-fn eval_if(nodes: &Vec<Node>, env: EnvPtr) -> Result<Value, Error> {
-    if nodes.len() != 4 {
-        return Err(Error::InvalidIfExpression);
-    }
-
-    let predicate = match eval(&nodes[1], env.clone())? {
+fn eval_if(
+    condition: Rc<RefCell<Expr>>,
+    on_true: Rc<RefCell<Expr>>,
+    on_false: Rc<RefCell<Expr>>,
+    env: EnvPtr,
+) -> Result<Value, Error> {
+    let predicate = match eval(condition, env.clone())? {
         Value::Boolean(b) => b,
-        _ => return Err(Error::InvalidIfExpression),
+        _ => return Err(Error::InvalidType),
     };
 
     if predicate {
-        eval(&nodes[2], env.clone())
+        eval(on_true, env.clone())
     } else {
-        eval(&nodes[3], env.clone())
+        eval(on_false, env.clone())
     }
+}
+
+fn eval_lambda(formals: &[String], seq: &[Rc<RefCell<Expr>>], env: EnvPtr) -> Value {
+    Value::Closure(
+        formals.iter().cloned().collect(),
+        seq.iter().cloned().collect(),
+        env.clone(),
+    )
+}
+
+fn eval_let(
+    definitions: &[(String, Rc<RefCell<Expr>>)],
+    seq: &[Rc<RefCell<Expr>>],
+    env: EnvPtr,
+) -> Result<Value, Error> {
+    let mut local_env = Env::extend(env.clone());
+    for (s, expr) in definitions.iter() {
+        local_env.bind(s, eval(expr.clone(), env.clone())?);
+    }
+
+    eval_sequence(seq, EnvPtr::new(local_env))
+}
+
+fn eval_unary_operation(
+    op: UnaryOperator,
+    operand: Rc<RefCell<Expr>>,
+    env: EnvPtr,
+) -> Result<Value, Error> {
+    match op {
+        UnaryOperator::Not => match eval(operand.clone(), env.clone())? {
+            Value::Boolean(b) => Ok(Value::Boolean(!b)),
+            _ => return Err(Error::InvalidType),
+        },
+    }
+}
+
+fn eval_binary_operation(
+    op: BinaryOperator,
+    a: Rc<RefCell<Expr>>,
+    b: Rc<RefCell<Expr>>,
+    env: EnvPtr,
+) -> Result<Value, Error> {
+    let a = eval(a.clone(), env.clone())?;
+    let b = eval(b.clone(), env.clone())?;
+
+    match op {
+        BinaryOperator::Add => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Sub => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Mul => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Div => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Eq => match (a, b) {
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a == b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a == b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Gt => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Gte => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a >= b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Lt => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Lte => match (a, b) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a <= b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::And => match (a, b) {
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
+            _ => Err(Error::InvalidType),
+        },
+        BinaryOperator::Or => match (a, b) {
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
+            _ => Err(Error::InvalidType),
+        },
+    }
+}
+
+fn eval_application(
+    func: Rc<RefCell<Expr>>,
+    args: &[Rc<RefCell<Expr>>],
+    env: EnvPtr,
+) -> Result<Value, Error> {
+    let (formals, seq, closure_env) = match eval(func.clone(), env.clone())? {
+        Value::Closure(f, s, ce) => (f, s, ce),
+        _ => return Err(Error::InvalidType),
+    };
+
+    if formals.len() != args.len() {
+        return Err(Error::InvalidApplication);
+    }
+
+    let mut call_env = Env::extend(closure_env.clone());
+    for (i, symbol) in formals.iter().enumerate() {
+        call_env.bind(&symbol, eval(args[i].clone(), env.clone())?);
+    }
+
+    eval_sequence(&seq, EnvPtr::new(call_env))
 }
 
 #[test]
@@ -413,12 +328,12 @@ fn test_eval() {
             "((lambda (a b) (+ a b) 4.0) 1 2)", // multibody lambda
             Value::Number(4.0),
         ),
-        // local bindings (let)
+        // local definitions (let)
         ("(let ((x 1)) x)", Value::Number(1.0)),
         ("(let ((x 1)) x 2)", Value::Number(2.0)),
         ("(let ((x 1) (y 2)) (+ x y))", Value::Number(3.0)),
         ("(let ((x (+ 1 3))) x)", Value::Number(4.0)),
-        // primitives
+        // operators
         ("(+ 1 1)", Value::Number(2.0)),
         ("(- 2 1)", Value::Number(1.0)),
         ("(* 2 3)", Value::Number(6.0)),
@@ -469,10 +384,10 @@ fn test_eval() {
         (
             "
             (let ((y (lambda (f)
-                       ((lambda (procedure)
-                          (f (lambda (arg) ((procedure procedure) arg))))
-                        (lambda (procedure)
-                          (f (lambda (arg) ((procedure procedure) arg)))))))
+                       ((lambda (funcedure)
+                          (f (lambda (arg) ((funcedure funcedure) arg))))
+                        (lambda (funcedure)
+                          (f (lambda (arg) ((funcedure funcedure) arg)))))))
                   (fib-pre (lambda (f)
                              (lambda (n)
                                (if (= n 0)
@@ -486,10 +401,12 @@ fn test_eval() {
             Value::Number(55.0),
         ),
     ];
+
     for c in cases.iter() {
+        println!("{}", c.0);
         assert_eq!(
             eval_sequence(
-                &parse(scan(c.0).unwrap()).unwrap(),
+                &parse(&scan(c.0).unwrap()).unwrap(),
                 EnvPtr::new(Env::root()),
             )
             .unwrap(),
