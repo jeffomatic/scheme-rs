@@ -24,25 +24,15 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct SrcPos {
-    pub row: usize,
-    pub col: usize,
+pub type SrcPos = (usize, usize);
+pub type SrcSpan = (SrcPos, SrcPos);
+
+fn next_col(p: SrcPos) -> SrcPos {
+    (p.0, p.1 + 1)
 }
 
-impl SrcPos {
-    fn new(row: usize, col: usize) -> SrcPos {
-        SrcPos { row, col }
-    }
-
-    fn next_col(&mut self) {
-        self.col += 1;
-    }
-
-    fn next_row(&mut self) {
-        self.row += 1;
-        self.col = 0;
-    }
+fn next_row(p: SrcPos) -> SrcPos {
+    (p.0 + 1, 0)
 }
 
 struct Stream<'a> {
@@ -56,7 +46,7 @@ impl Stream<'_> {
         Stream {
             iter: s.chars(),
             buf: VecDeque::new(),
-            iter_pos: SrcPos::default(),
+            iter_pos: (0, 0),
         }
     }
 
@@ -68,9 +58,9 @@ impl Stream<'_> {
 
                     // only handle Unix-style newlines
                     if c == '\n' {
-                        self.iter_pos.next_row();
+                        self.iter_pos = next_row(self.iter_pos);
                     } else {
-                        self.iter_pos.next_col();
+                        self.iter_pos = next_col(self.iter_pos);
                     }
                 }
                 None => return None,
@@ -108,8 +98,7 @@ pub enum TokenType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub t: TokenType,
-    pub start: SrcPos,
-    pub end: SrcPos,
+    pub span: SrcSpan,
     pub literal: String,
 }
 
@@ -117,8 +106,7 @@ fn open_brace(stream: &mut Stream) -> Token {
     let (_, p) = stream.take();
     Token {
         t: TokenType::OpenBrace,
-        start: p,
-        end: p,
+        span: (p, p),
         literal: "(".to_string(),
     }
 }
@@ -127,8 +115,7 @@ fn close_brace(stream: &mut Stream) -> Token {
     let (_, p) = stream.take();
     Token {
         t: TokenType::CloseBrace,
-        start: p,
-        end: p,
+        span: (p, p),
         literal: ")".to_string(),
     }
 }
@@ -156,8 +143,7 @@ fn identifier(stream: &mut Stream) -> Token {
 
     Token {
         t: TokenType::Identifier,
-        start,
-        end,
+        span: (start, end),
         literal,
     }
 }
@@ -191,8 +177,7 @@ fn string(stream: &mut Stream) -> Result<Token, Error> {
 
     Ok(Token {
         t: TokenType::String,
-        start,
-        end,
+        span: (start, end),
         literal,
     })
 }
@@ -230,8 +215,7 @@ fn number(stream: &mut Stream) -> Result<Token, Error> {
 
     Ok(Token {
         t: TokenType::Number,
-        start,
-        end,
+        span: (start, end),
         literal,
     })
 }
@@ -272,26 +256,22 @@ fn scan_test() {
         vec![
             Token {
                 t: TokenType::OpenBrace,
-                start: SrcPos::new(0, 0),
-                end: SrcPos::new(0, 0),
+                span: ((0, 0), (0, 0)),
                 literal: "(".to_string()
             },
             Token {
                 t: TokenType::OpenBrace,
-                start: SrcPos::new(0, 1),
-                end: SrcPos::new(0, 1),
+                span: ((0, 1), (0, 1)),
                 literal: "(".to_string()
             },
             Token {
                 t: TokenType::CloseBrace,
-                start: SrcPos::new(0, 2),
-                end: SrcPos::new(0, 2),
+                span: ((0, 2), (0, 2)),
                 literal: ")".to_string()
             },
             Token {
                 t: TokenType::CloseBrace,
-                start: SrcPos::new(0, 3),
-                end: SrcPos::new(0, 3),
+                span: ((0, 3), (0, 3)),
                 literal: ")".to_string()
             },
         ]
@@ -312,26 +292,22 @@ a
         vec![
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(1, 0),
-                end: SrcPos::new(1, 0),
+                span: ((1, 0), (1, 0)),
                 literal: "a".to_string()
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(2, 2),
-                end: SrcPos::new(2, 2),
+                span: ((2, 2), (2, 2)),
                 literal: "b".to_string()
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(3, 7),
-                end: SrcPos::new(3, 7),
+                span: ((3, 7), (3, 7)),
                 literal: "c".to_string()
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(5, 4),
-                end: SrcPos::new(5, 4),
+                span: ((5, 4), (5, 4)),
                 literal: "d".to_string()
             }
         ]
@@ -343,44 +319,37 @@ a
         vec![
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(0, 0),
-                end: SrcPos::new(0, 0),
+                span: ((0, 0), (0, 0)),
                 literal: "a".to_string(),
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(0, 2),
-                end: SrcPos::new(0, 4),
+                span: ((0, 2), (0, 4)),
                 literal: "abc".to_string(),
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(0, 6),
-                end: SrcPos::new(0, 8),
+                span: ((0, 6), (0, 8)),
                 literal: "abc".to_string(),
             },
             Token {
                 t: TokenType::OpenBrace,
-                start: SrcPos::new(0, 9),
-                end: SrcPos::new(0, 9),
+                span: ((0, 9), (0, 9)),
                 literal: "(".to_string()
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(0, 11),
-                end: SrcPos::new(0, 13),
+                span: ((0, 11), (0, 13)),
                 literal: "abc".to_string(),
             },
             Token {
                 t: TokenType::CloseBrace,
-                start: SrcPos::new(0, 14),
-                end: SrcPos::new(0, 14),
+                span: ((0, 14), (0, 14)),
                 literal: ")".to_string(),
             },
             Token {
                 t: TokenType::Identifier,
-                start: SrcPos::new(0, 16),
-                end: SrcPos::new(0, 16),
+                span: ((0, 16), (0, 16)),
                 literal: "-".to_string(),
             },
         ]
@@ -392,50 +361,42 @@ a
         vec![
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 0 },
-                end: SrcPos { row: 0, col: 0 },
+                span: ((0, 0), (0, 0)),
                 literal: "1".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 2 },
-                end: SrcPos { row: 0, col: 4 },
+                span: ((0, 2), (0, 4)),
                 literal: "123".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 6 },
-                end: SrcPos { row: 0, col: 9 },
+                span: ((0, 6), (0, 9)),
                 literal: "123.".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 11 },
-                end: SrcPos { row: 0, col: 15 },
+                span: ((0, 11), (0, 15)),
                 literal: "123.4".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 17 },
-                end: SrcPos { row: 0, col: 18 },
+                span: ((0, 17), (0, 18)),
                 literal: "-1".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 20 },
-                end: SrcPos { row: 0, col: 23 },
+                span: ((0, 20), (0, 23)),
                 literal: "-123".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 25 },
-                end: SrcPos { row: 0, col: 29 },
+                span: ((0, 25), (0, 29)),
                 literal: "-123.".to_string(),
             },
             Token {
                 t: TokenType::Number,
-                start: SrcPos { row: 0, col: 31 },
-                end: SrcPos { row: 0, col: 36 },
+                span: ((0, 31), (0, 36)),
                 literal: "-123.4".to_string(),
             },
         ]
@@ -447,20 +408,17 @@ a
         vec![
             Token {
                 t: TokenType::String,
-                start: SrcPos::new(0, 0),
-                end: SrcPos::new(0, 6),
+                span: ((0, 0), (0, 6)),
                 literal: r#""hello""#.to_string(),
             },
             Token {
                 t: TokenType::String,
-                start: SrcPos::new(0, 8),
-                end: SrcPos::new(0, 13),
+                span: ((0, 8), (0, 13)),
                 literal: r#"" ( )""#.to_string(),
             },
             Token {
                 t: TokenType::String,
-                start: SrcPos::new(0, 15),
-                end: SrcPos::new(0, 21),
+                span: ((0, 15), (0, 21)),
                 literal: r#""\" \\""#.to_string(),
             }
         ]

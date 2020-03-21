@@ -1,12 +1,12 @@
 use std::error;
 use std::fmt;
 
-use super::lex;
+use super::lex::{self, SrcSpan};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
-    UnterminatedCompoundNode(lex::SrcPos),
-    UnmatchedCloseBrace(lex::SrcPos),
+    UnterminatedCompoundNode(SrcSpan),
+    UnmatchedCloseBrace(SrcSpan),
 }
 
 impl error::Error for Error {}
@@ -50,9 +50,9 @@ pub fn parse(toks: Vec<lex::Token>) -> Result<Vec<Node>, Error> {
         match t.t {
             lex::TokenType::OpenBrace => match compound(&mut iter) {
                 Some(node) => seq.push(node),
-                None => return Err(Error::UnterminatedCompoundNode(t.start)),
+                None => return Err(Error::UnterminatedCompoundNode(t.span)),
             },
-            lex::TokenType::CloseBrace => return Err(Error::UnmatchedCloseBrace(t.start)),
+            lex::TokenType::CloseBrace => return Err(Error::UnmatchedCloseBrace(t.span)),
             _ => seq.push(Node::Leaf(t.clone())),
         }
     }
@@ -67,8 +67,7 @@ fn test_parse() {
         parse(lex::scan("a").unwrap()).unwrap(),
         vec![Node::Leaf(lex::Token {
             t: lex::TokenType::Identifier,
-            start: lex::SrcPos { row: 0, col: 0 },
-            end: lex::SrcPos { row: 0, col: 0 },
+            span: ((0, 0), (0, 0)),
             literal: "a".to_string()
         })]
     );
@@ -78,8 +77,7 @@ fn test_parse() {
         parse(lex::scan("(a)").unwrap()).unwrap(),
         vec![Node::Compound(vec![Node::Leaf(lex::Token {
             t: lex::TokenType::Identifier,
-            start: lex::SrcPos { row: 0, col: 1 },
-            end: lex::SrcPos { row: 0, col: 1 },
+            span: ((0, 1), (0, 1)),
             literal: "a".to_string()
         })])]
     );
@@ -90,14 +88,12 @@ fn test_parse() {
         vec![Node::Compound(vec![
             Node::Leaf(lex::Token {
                 t: lex::TokenType::Identifier,
-                start: lex::SrcPos { row: 0, col: 1 },
-                end: lex::SrcPos { row: 0, col: 1 },
+                span: ((0, 1), (0, 1)),
                 literal: "a".to_string()
             }),
             Node::Compound(vec![Node::Leaf(lex::Token {
                 t: lex::TokenType::Identifier,
-                start: lex::SrcPos { row: 0, col: 4 },
-                end: lex::SrcPos { row: 0, col: 4 },
+                span: ((0, 4), (0, 4)),
                 literal: "b".to_string()
             })])
         ])]
@@ -110,14 +106,12 @@ fn test_parse() {
             vec![
                 Node::Leaf(lex::Token {
                     t: lex::TokenType::Identifier,
-                    start: lex::SrcPos { row: 0, col: 3 },
-                    end: lex::SrcPos { row: 0, col: 3 },
+                    span: ((0, 3), (0, 3)),
                     literal: "a".to_string()
                 }),
                 Node::Leaf(lex::Token {
                     t: lex::TokenType::Identifier,
-                    start: lex::SrcPos { row: 0, col: 5 },
-                    end: lex::SrcPos { row: 0, col: 5 },
+                    span: ((0, 5), (0, 5)),
                     literal: "b".to_string()
                 })
             ]
@@ -130,20 +124,17 @@ fn test_parse() {
         vec![
             Node::Leaf(lex::Token {
                 t: lex::TokenType::Identifier,
-                start: lex::SrcPos { row: 0, col: 0 },
-                end: lex::SrcPos { row: 0, col: 0 },
+                span: ((0, 0), (0, 0)),
                 literal: "a".to_string()
             }),
             Node::Compound(vec![Node::Leaf(lex::Token {
                 t: lex::TokenType::Identifier,
-                start: lex::SrcPos { row: 0, col: 3 },
-                end: lex::SrcPos { row: 0, col: 3 },
+                span: ((0, 3), (0, 3)),
                 literal: "b".to_string()
             })]),
             Node::Leaf(lex::Token {
                 t: lex::TokenType::Identifier,
-                start: lex::SrcPos { row: 0, col: 6 },
-                end: lex::SrcPos { row: 0, col: 6 },
+                span: ((0, 6), (0, 6)),
                 literal: "c".to_string()
             }),
         ]

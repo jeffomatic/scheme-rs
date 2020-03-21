@@ -28,12 +28,12 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::UndefinedSymbol(tok) => {
-                write!(f, "undefined symbol {} at {:?}", tok.literal, tok.start)
+                write!(f, "undefined symbol {} at {:?}", tok.literal, tok.span)
             }
             Self::InvalidLeafNodeAtCompoundStart(tok) => write!(
                 f,
                 "invalid token {} at start of compound node at {:?}",
-                tok.literal, tok.start
+                tok.literal, tok.span
             ),
             _ => todo!(),
         }
