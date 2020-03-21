@@ -27,7 +27,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Void, // the value of define expressions
     Null,
@@ -50,37 +49,34 @@ impl Value {
     }
 }
 
-type ValuePtr = Rc<RefCell<Value>>;
-
-// A wrapper for Rc<RefCell<Env>> that is Debug and PartialEq. These traits are
-// necessary so Value::Closure can satisfy those traits.
-#[derive(Clone)]
-pub struct EnvPtr(Rc<RefCell<Env>>);
-
-impl EnvPtr {
-    fn new(env: Env) -> EnvPtr {
-        Self(Rc::new(RefCell::new(env)))
-    }
-}
-
-impl Deref for EnvPtr {
-    type Target = Rc<RefCell<Env>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl fmt::Debug for EnvPtr {
+impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TODO: env pointer debug print")
+        match self {
+            Self::Void => write!(f, "Value::Void"),
+            Self::Null => write!(f, "Value::Null"),
+            Self::Boolean(v) => write!(f, "Value::Boolean({})", v),
+            Self::Number(v) => write!(f, "Value::Number({})", v),
+            Self::String(v) => write!(f, "Value::String({})", v),
+            Self::Closure(formals, ..) => write!(f, "Value::Closure({:?})", formals),
+        }
     }
 }
 
-impl cmp::PartialEq for EnvPtr {
-    fn eq(&self, _other: &Self) -> bool {
-        false
+impl cmp::PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Void, Self::Void) => true,
+            (Self::Null, Self::Null) => true,
+            (Self::Boolean(a), Self::Boolean(b)) => a == b,
+            (Self::Number(a), Self::Number(b)) => a.eq(b),
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Closure(..), Self::Closure(..)) => false, // can't compare closures
+            _ => false,
+        }
     }
 }
+
+type ValuePtr = Rc<RefCell<Value>>;
 
 pub struct Env {
     symbols: HashMap<String, ValuePtr>,
@@ -88,6 +84,10 @@ pub struct Env {
 }
 
 impl Env {
+    fn into_ptr(self) -> EnvPtr {
+        Rc::new(RefCell::new(self))
+    }
+
     fn extend(parent: EnvPtr) -> Env {
         Env {
             symbols: HashMap::new(),
@@ -116,6 +116,8 @@ impl Env {
         }
     }
 }
+
+type EnvPtr = Rc<RefCell<Env>>;
 
 pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
     match &*expr.borrow() {
@@ -196,7 +198,7 @@ fn eval_let(
         local_env.bind(s, eval(expr.clone(), env.clone())?);
     }
 
-    eval_sequence(seq, EnvPtr::new(local_env))
+    eval_sequence(seq, local_env.into_ptr())
 }
 
 fn eval_unary_operation(
@@ -294,7 +296,7 @@ fn eval_application(func: ExprPtr, args: &[ExprPtr], env: EnvPtr) -> Result<Valu
         call_env.bind(&symbol, eval(args[i].clone(), env.clone())?);
     }
 
-    eval_sequence(&seq, EnvPtr::new(call_env))
+    eval_sequence(&seq, call_env.into_ptr())
 }
 
 #[test]
@@ -388,13 +390,10 @@ fn test_eval() {
     for c in cases.iter() {
         println!("{}", c.0);
         assert_eq!(
-            eval_sequence(
-                &parse(&scan(c.0).unwrap()).unwrap(),
-                EnvPtr::new(Env::root()),
-            )
-            .unwrap()
-            .borrow()
-            .deref(),
+            eval_sequence(&parse(&scan(c.0).unwrap()).unwrap(), Env::root().into_ptr(),)
+                .unwrap()
+                .borrow()
+                .deref(),
             &c.1,
             "expression: {}",
             c.0
