@@ -7,7 +7,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 
 use super::lex::scan;
-use super::parse::{parse, BinaryOperator, Expr, ExprPtr, UnaryOperator};
+use super::parse::{parse, BinaryOperator, Expr, ExprPtr, ProcDef, UnaryOperator};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -149,18 +149,14 @@ pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
         Expr::Number { underlying, .. } => Ok(Value::Number(*underlying).into_ptr()),
         Expr::Reference { literal, .. } => eval_reference(&literal, env),
         Expr::Define { symbol, expr, .. } => eval_define(&symbol, expr.clone(), env),
+        Expr::DefineProc { symbol, procdef } => eval_define_proc(&symbol, &procdef, env),
         Expr::If {
             condition,
             on_true,
             on_false,
             ..
         } => eval_if(condition.clone(), on_true.clone(), on_false.clone(), env),
-        Expr::Lambda {
-            formals,
-            varparam,
-            seq,
-            ..
-        } => Ok(eval_lambda(&formals, &varparam, &seq, env)),
+        Expr::Lambda(procdef) => Ok(eval_lambda(&procdef, env)),
         Expr::Let {
             definitions, seq, ..
         } => eval_let(&definitions, &seq, env),
@@ -193,6 +189,18 @@ fn eval_define(symbol: &str, expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Err
     Ok(Value::Void.into_ptr())
 }
 
+fn eval_define_proc(symbol: &str, procdef: &ProcDef, env: EnvPtr) -> Result<ValuePtr, Error> {
+    let closure = Value::Closure {
+        formals: procdef.formals.to_vec(),
+        varparam: procdef.varparam.clone(),
+        seq: procdef.seq.to_vec(),
+        env: env.clone(),
+    };
+    env.borrow_mut()
+        .bind(&symbol.to_string(), closure.into_ptr());
+    Ok(Value::Void.into_ptr())
+}
+
 fn eval_if(
     condition: ExprPtr,
     on_true: ExprPtr,
@@ -211,16 +219,11 @@ fn eval_if(
     }
 }
 
-fn eval_lambda(
-    formals: &[String],
-    varparam: &Option<String>,
-    seq: &[ExprPtr],
-    env: EnvPtr,
-) -> ValuePtr {
+fn eval_lambda(procdef: &ProcDef, env: EnvPtr) -> ValuePtr {
     Value::Closure {
-        formals: formals.to_vec(),
-        varparam: varparam.clone(),
-        seq: seq.to_vec(),
+        formals: procdef.formals.to_vec(),
+        varparam: procdef.varparam.clone(),
+        seq: procdef.seq.to_vec(),
         env,
     }
     .into_ptr()
@@ -381,6 +384,10 @@ fn test_eval() {
         ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
         ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
         ("(define x 1) (define y x) y ", Value::Number(1.0)), // references to references
+        // proc definitions
+        ("(define (f) 1) (f)", Value::Number(1.0)),
+        ("(define (f a) a) (f 2)", Value::Number(2.0)),
+        ("(define (f a) a 3) (f 2)", Value::Number(3.0)),
         // closures (lambdas and applications)
         ("((lambda (a b) (+ a b)) 1 2)", Value::Number(3.0)),
         (
@@ -441,6 +448,13 @@ fn test_eval() {
         ),
         (
             "
+            (define (f a . rest) a)
+            (f 1 2 3)
+            ",
+            Value::Number(1.0),
+        ),
+        (
+            "
             (define f (lambda (a . rest) rest))
             (f 1 2 3)
             ",
@@ -448,7 +462,25 @@ fn test_eval() {
         ),
         (
             "
+            (define (f a . rest) rest)
+            (f 1 2 3)
+            ",
+            Value::make_list(&[Value::Number(2.0).into_ptr(), Value::Number(3.0).into_ptr()]),
+        ),
+        (
+            "
             (define f (lambda (. rest) rest))
+            (f 1 2 3)
+            ",
+            Value::make_list(&[
+                Value::Number(1.0).into_ptr(),
+                Value::Number(2.0).into_ptr(),
+                Value::Number(3.0).into_ptr(),
+            ]),
+        ),
+        (
+            "
+            (define (f . rest) rest)
             (f 1 2 3)
             ",
             Value::make_list(&[

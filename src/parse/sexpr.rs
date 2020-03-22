@@ -7,6 +7,15 @@ pub enum Sexpr {
     Compound(Vec<Sexpr>, SrcSpan),
 }
 
+impl Sexpr {
+    pub fn span(&self) -> SrcSpan {
+        match self {
+            Self::Atom(tok) => tok.span,
+            Self::Compound(_, span) => *span,
+        }
+    }
+}
+
 pub fn parse_tokens(toks: &[Token]) -> Result<Vec<Sexpr>, Error> {
     let mut seq = Vec::new();
     let mut iter = toks.iter();

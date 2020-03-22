@@ -59,6 +59,14 @@ impl BinaryOperator {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ProcDef {
+    pub formals: Vec<String>,
+    pub varparam: Option<String>,
+    pub seq: Vec<ExprPtr>,
+    pub span: SrcSpan,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Expr {
     Null {
         span: SrcSpan,
@@ -84,18 +92,17 @@ pub enum Expr {
         expr: ExprPtr,
         span: SrcSpan,
     },
+    DefineProc {
+        symbol: String,
+        procdef: ProcDef,
+    },
     If {
         condition: ExprPtr,
         on_true: ExprPtr,
         on_false: ExprPtr,
         span: SrcSpan,
     },
-    Lambda {
-        formals: Vec<String>,
-        varparam: Option<String>,
-        seq: Vec<ExprPtr>,
-        span: SrcSpan,
-    },
+    Lambda(ProcDef),
     Let {
         definitions: Vec<(String, ExprPtr)>,
         seq: Vec<ExprPtr>,
@@ -239,27 +246,77 @@ fn parse_binary_operation(
     })
 }
 
-fn extract_identifier(sexpr: &Sexpr) -> Option<String> {
+fn parse_identifier(sexpr: &Sexpr) -> Result<String, Error> {
     match sexpr {
         Sexpr::Atom(tok) => match tok.t {
-            TokenType::Identifier => Some(tok.literal.clone()),
-            _ => None,
+            TokenType::Identifier => Ok(tok.literal.clone()),
+            _ => return Err(Error::ExpectedIdentifier(tok.span)),
         },
-        _ => None,
+        Sexpr::Compound(_, span) => return Err(Error::ExpectedIdentifier(*span)),
+    }
+}
+
+fn parse_proc_signature(sexprs: &[Sexpr]) -> Result<(Vec<String>, Option<String>), Error> {
+    let mut symbols = Vec::new();
+    let mut period = None;
+
+    for (i, s) in sexprs.iter().enumerate() {
+        let symbol = parse_identifier(s)?;
+        symbols.push(symbol.to_string());
+        if symbol == "." {
+            if period.is_some() {
+                return Err(Error::MultiplePeriodsInSignature(s.span()));
+            }
+            period = Some(i);
+        }
+    }
+
+    match period {
+        Some(i) => {
+            if i != symbols.len() - 2 {
+                return Err(Error::InvalidVarParam(sexprs[i].span()));
+            }
+            Ok((
+                (&symbols[0..i]).to_vec(),
+                Some(symbols[symbols.len() - 1].to_string()),
+            ))
+        }
+        None => Ok((symbols.to_vec(), None)),
     }
 }
 
 fn parse_define(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
-    if args.len() != 2 {
+    if args.len() < 2 {
         return Err(Error::InvalidDefine(span));
     }
 
-    let symbol = match extract_identifier(&args[0]) {
-        Some(s) => s,
-        None => return Err(Error::InvalidDefine(span)),
-    };
-    let expr = parse_sexpr(&args[1])?.into_ptr();
-    Ok(Expr::Define { symbol, expr, span })
+    let (head, seq) = args.split_first().unwrap();
+
+    match head {
+        Sexpr::Atom(_) => {
+            if seq.len() != 1 {
+                return Err(Error::InvalidDefine(span));
+            }
+            Ok(Expr::Define {
+                symbol: parse_identifier(head)?,
+                expr: parse_sexpr(&seq[0])?.into_ptr(),
+                span,
+            })
+        }
+        Sexpr::Compound(sexprs, _) => {
+            let (symbol, sig) = sexprs.split_first().ok_or(Error::InvalidDefine(span))?;
+            let (formals, varparam) = parse_proc_signature(sig)?;
+            Ok(Expr::DefineProc {
+                symbol: parse_identifier(symbol)?,
+                procdef: ProcDef {
+                    formals,
+                    varparam,
+                    seq: parse_sexpr_seq(seq)?,
+                    span,
+                },
+            })
+        }
+    }
 }
 
 fn parse_if(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
@@ -276,53 +333,17 @@ fn parse_if(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
 }
 
 fn parse_lambda(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
-    let (first, rest) = match args.split_first() {
-        Some(x) => x,
-        None => return Err(Error::InvalidLambda(span)),
+    let (sig, seq) = match args.split_first() {
+        Some((Sexpr::Compound(formal_sexprs, _), seq)) => (formal_sexprs, seq),
+        _ => return Err(Error::InvalidLambda(span)),
     };
-
-    let mut formals = Vec::new();
-    let mut varparam = None;
-
-    match first {
-        Sexpr::Atom(_) => return Err(Error::InvalidLambda(span)),
-        Sexpr::Compound(formal_sexprs, _) => {
-            let mut end_formals = formal_sexprs.len();
-
-            // Check for variadic arguments
-            if formal_sexprs.len() > 1 {
-                let next_to_last = &formal_sexprs[formal_sexprs.len() - 2];
-                let last = &formal_sexprs[formal_sexprs.len() - 1];
-                if let (Some(next_to_last), Some(last)) =
-                    (extract_identifier(next_to_last), extract_identifier(last))
-                {
-                    if next_to_last == "." {
-                        varparam = Some(last);
-                        end_formals = formal_sexprs.len() - 2;
-                    }
-                }
-            }
-
-            for f in &formal_sexprs[0..end_formals] {
-                match extract_identifier(f) {
-                    Some(s) => {
-                        if s == "." {
-                            return Err(Error::InvalidLambda(span)); // TODO: replace with symbol validator
-                        }
-                        formals.push(s.to_string());
-                    }
-                    None => return Err(Error::InvalidLambda(span)),
-                }
-            }
-        }
-    }
-
-    Ok(Expr::Lambda {
+    let (formals, varparam) = parse_proc_signature(sig)?;
+    Ok(Expr::Lambda(ProcDef {
         formals,
         varparam,
-        seq: parse_sexpr_seq(rest)?,
+        seq: parse_sexpr_seq(seq)?,
         span,
-    })
+    }))
 }
 
 fn parse_let(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
@@ -343,10 +364,7 @@ fn parse_let(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
                             return Err(Error::InvalidLet(span));
                         }
 
-                        let symbol = match extract_identifier(&def_children[0]) {
-                            Some(s) => s,
-                            None => return Err(Error::InvalidLet(span)),
-                        };
+                        let symbol = parse_identifier(&def_children[0])?;
                         let expr = parse_sexpr(&def_children[1])?;
 
                         definitions.push((symbol, expr.into_ptr()));
