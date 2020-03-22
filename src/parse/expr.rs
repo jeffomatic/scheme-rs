@@ -9,6 +9,12 @@ pub enum UnaryOperator {
     Not,
     Car,
     Cdr,
+    IsNull,
+    IsBoolean,
+    IsString,
+    IsNumber,
+    IsClosure,
+    IsPair,
 }
 
 impl UnaryOperator {
@@ -17,6 +23,12 @@ impl UnaryOperator {
             "not" => Some(Self::Not),
             "car" => Some(Self::Car),
             "cdr" => Some(Self::Cdr),
+            "null?" => Some(Self::IsNull),
+            "bool?" => Some(Self::IsBoolean),
+            "string?" => Some(Self::IsString),
+            "number?" => Some(Self::IsNumber),
+            "proc?" => Some(Self::IsClosure),
+            "pair?" => Some(Self::IsPair),
             _ => None,
         }
     }

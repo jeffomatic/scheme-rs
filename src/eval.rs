@@ -43,7 +43,7 @@ pub enum Value {
 }
 
 impl Value {
-    fn into_ptr(self) -> ValuePtr {
+    pub fn into_ptr(self) -> ValuePtr {
         Rc::new(RefCell::new(self))
     }
 
@@ -54,7 +54,7 @@ impl Value {
         }
     }
 
-    fn make_list(vals: &[ValuePtr]) -> Value {
+    pub fn make_list(vals: &[ValuePtr]) -> Value {
         let mut res = Value::Null;
         for v in vals.iter().rev() {
             res = Value::Pair(v.clone(), res.into_ptr());
@@ -106,29 +106,29 @@ pub struct Env {
 }
 
 impl Env {
-    fn into_ptr(self) -> EnvPtr {
+    pub fn into_ptr(self) -> EnvPtr {
         Rc::new(RefCell::new(self))
     }
 
-    fn extend(parent: EnvPtr) -> Env {
+    pub fn extend(parent: EnvPtr) -> Env {
         Env {
             symbols: HashMap::new(),
             parent: Some(parent),
         }
     }
 
-    fn root() -> Env {
+    pub fn root() -> Env {
         Env {
             symbols: HashMap::new(),
             parent: None,
         }
     }
 
-    fn bind(&mut self, symbol: &str, val: ValuePtr) {
+    pub fn bind(&mut self, symbol: &str, val: ValuePtr) {
         self.symbols.insert(symbol.to_string(), val);
     }
 
-    fn lookup(&self, symbol: &str) -> Option<ValuePtr> {
+    pub fn lookup(&self, symbol: &str) -> Option<ValuePtr> {
         match self.symbols.get(symbol) {
             Some(v) => Some(v.clone()), // todo: values should be smart pointers
             None => match &self.parent {
@@ -139,7 +139,7 @@ impl Env {
     }
 }
 
-type EnvPtr = Rc<RefCell<Env>>;
+pub type EnvPtr = Rc<RefCell<Env>>;
 
 pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
     match &*expr.borrow() {
@@ -172,7 +172,7 @@ pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
     }
 }
 
-fn eval_sequence(exprs: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
+pub fn eval_sequence(exprs: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
     let mut tail_value = Rc::new(RefCell::new(Value::Void));
     for e in exprs.iter() {
         tail_value = eval(e.clone(), env.clone())?;
@@ -259,6 +259,30 @@ fn eval_unary_operation(
         UnaryOperator::Cdr => match val {
             Value::Pair(_, b) => Ok(b.clone()),
             _ => Err(Error::InvalidType),
+        },
+        UnaryOperator::IsNull => match val {
+            Value::Null => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
+        },
+        UnaryOperator::IsBoolean => match val {
+            Value::Boolean(..) => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
+        },
+        UnaryOperator::IsString => match val {
+            Value::String(..) => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
+        },
+        UnaryOperator::IsNumber => match val {
+            Value::Number(..) => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
+        },
+        UnaryOperator::IsClosure => match val {
+            Value::Closure { .. } => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
+        },
+        UnaryOperator::IsPair => match val {
+            Value::Pair(..) => Ok(Value::Boolean(true).into_ptr()),
+            _ => Ok(Value::Boolean(false).into_ptr()),
         },
     }
 }
@@ -422,6 +446,19 @@ fn test_eval() {
         ("(or #f #t)", Value::Boolean(true)),
         ("(or #t #f)", Value::Boolean(true)),
         ("(or #t #t)", Value::Boolean(true)),
+        ("(null? ())", Value::Boolean(true)),
+        ("(null? 0)", Value::Boolean(false)),
+        ("(bool? #t)", Value::Boolean(true)),
+        ("(bool? #f)", Value::Boolean(true)),
+        ("(bool? 1)", Value::Boolean(false)),
+        (r#"(string? "hello world")"#, Value::Boolean(true)),
+        ("(string? 1)", Value::Boolean(false)),
+        ("(number? 1)", Value::Boolean(true)),
+        ("(number? #t)", Value::Boolean(false)),
+        ("(proc? (lambda (x) x))", Value::Boolean(true)),
+        ("(proc? 1)", Value::Boolean(false)),
+        ("(pair? (cons 1 2))", Value::Boolean(true)),
+        ("(pair? 1)", Value::Boolean(false)),
         (
             "(cons 1 2)",
             Value::Pair(Value::Number(1.0).into_ptr(), Value::Number(2.0).into_ptr()),
