@@ -188,8 +188,8 @@ fn eval_reference(symbol: &str, env: EnvPtr) -> Result<ValuePtr, Error> {
 }
 
 fn eval_define(symbol: &str, expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
-    env.borrow_mut()
-        .bind(&symbol.to_string(), eval(expr, env.clone())?);
+    let v = eval(expr, env.clone())?;
+    env.borrow_mut().bind(&symbol.to_string(), v);
     Ok(Value::Void.into_ptr())
 }
 
@@ -380,6 +380,7 @@ fn test_eval() {
         ("(define x 1) x", Value::Number(1.0)),
         ("(define x 2) (let ((y x)) y)", Value::Number(2.0)),
         ("(define x 2) (let ((x 3)) x)", Value::Number(3.0)),
+        ("(define x 1) (define y x) y ", Value::Number(1.0)), // references to references
         // closures (lambdas and applications)
         ("((lambda (a b) (+ a b)) 1 2)", Value::Number(3.0)),
         (
@@ -494,12 +495,12 @@ fn test_eval() {
 
     for c in cases.iter() {
         assert_eq!(
-            eval_sequence(&parse(&scan(c.0).unwrap()).unwrap(), Env::root().into_ptr(),)
+            eval_sequence(&parse(&scan(c.0).unwrap()).unwrap(), Env::root().into_ptr())
                 .unwrap()
                 .borrow()
                 .deref(),
             &c.1,
-            "expression: {}",
+            "src: {}",
             c.0
         );
     }
