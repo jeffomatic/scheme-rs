@@ -6,7 +6,6 @@ use std::rc::Rc;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum UnaryOperator {
-    Not,
     Car,
     Cdr,
     IsNull,
@@ -20,7 +19,6 @@ pub enum UnaryOperator {
 impl UnaryOperator {
     fn from(s: &str) -> Option<Self> {
         match s {
-            "not" => Some(Self::Not),
             "car" => Some(Self::Car),
             "cdr" => Some(Self::Cdr),
             "null?" => Some(Self::IsNull),
@@ -42,11 +40,6 @@ pub enum BinaryOperator {
     Div,
     Eq,
     Gt,
-    Gte,
-    Lt,
-    Lte,
-    And,
-    Or,
     Cons,
 }
 
@@ -59,11 +52,6 @@ impl BinaryOperator {
             "/" => Some(Self::Div),
             "=" => Some(Self::Eq),
             ">" => Some(Self::Gt),
-            ">=" => Some(Self::Gte),
-            "<" => Some(Self::Lt),
-            "<=" => Some(Self::Lte),
-            "and" => Some(Self::And),
-            "or" => Some(Self::Or),
             "cons" => Some(Self::Cons),
             _ => None,
         }

@@ -248,10 +248,6 @@ fn eval_unary_operation(
     let val = &*valptr.borrow();
 
     match op {
-        UnaryOperator::Not => {
-            let b = val.as_bool().ok_or(Error::InvalidType)?;
-            Ok(Value::Boolean(!b).into_ptr())
-        }
         UnaryOperator::Car => match val {
             Value::Pair(a, _) => Ok(a.clone()),
             _ => Err(Error::InvalidType),
@@ -323,26 +319,6 @@ fn eval_binary_operation(
         },
         BinaryOperator::Gt => match (a, b) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a > b).into_ptr()),
-            _ => Err(Error::InvalidType),
-        },
-        BinaryOperator::Gte => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a >= b).into_ptr()),
-            _ => Err(Error::InvalidType),
-        },
-        BinaryOperator::Lt => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a < b).into_ptr()),
-            _ => Err(Error::InvalidType),
-        },
-        BinaryOperator::Lte => match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a <= b).into_ptr()),
-            _ => Err(Error::InvalidType),
-        },
-        BinaryOperator::And => match (a, b) {
-            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(*a && *b).into_ptr()),
-            _ => Err(Error::InvalidType),
-        },
-        BinaryOperator::Or => match (a, b) {
-            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(*a || *b).into_ptr()),
             _ => Err(Error::InvalidType),
         },
         BinaryOperator::Cons => Ok(Value::Pair(aptr.clone(), bptr.clone()).into_ptr()),
@@ -433,19 +409,6 @@ fn test_eval() {
         ("(> 1 1)", Value::Boolean(false)),
         ("(> 1 0)", Value::Boolean(true)),
         ("(> 0 1)", Value::Boolean(false)),
-        ("(< 1 1)", Value::Boolean(false)),
-        ("(< 1 0)", Value::Boolean(false)),
-        ("(< 0 1)", Value::Boolean(true)),
-        ("(not #t)", Value::Boolean(false)),
-        ("(not #f)", Value::Boolean(true)),
-        ("(and #f #f)", Value::Boolean(false)),
-        ("(and #f #t)", Value::Boolean(false)),
-        ("(and #t #f)", Value::Boolean(false)),
-        ("(and #t #t)", Value::Boolean(true)),
-        ("(or #f #f)", Value::Boolean(false)),
-        ("(or #f #t)", Value::Boolean(true)),
-        ("(or #t #f)", Value::Boolean(true)),
-        ("(or #t #t)", Value::Boolean(true)),
         ("(null? ())", Value::Boolean(true)),
         ("(null? 0)", Value::Boolean(false)),
         ("(bool? #t)", Value::Boolean(true)),
