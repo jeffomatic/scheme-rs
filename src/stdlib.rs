@@ -4,34 +4,48 @@ use super::parse::parse;
 
 fn define(env: EnvPtr) {
     let stdlib = "
+      ; add bindings for operators so they can be used in higher-order functions
+      (define car (lambda (pair) (car pair)))
+      (define cdr (lambda (pair) (cdr pair)))
+      (define cons (lambda (a b) (cons a b)))
+      (define null? (lambda (v) (null? v)))
+      (define bool? (lambda (v) (bool? v)))
+      (define string? (lambda (v) (string? v)))
+      (define number? (lambda (v) (number? v)))
+      (define pair? (lambda (v) (pair? v)))
+      (define + (lambda (a b) (+ a b)))
+      (define - (lambda (a b) (- a b)))
+      (define * (lambda (a b) (* a b)))
+      (define / (lambda (a b) (/ a b)))
+      (define = (lambda (a b) (= a b)))
+      (define > (lambda (a b) (> a b)))
+
+      ; some things that maybe should just be operators
       (define not (lambda (a) (if a #f #t)))
-      (define or (lambda (a b) (if a #t b)))
+      (define or (lambda (a b) (if a #t b))) ; this needs to be a special form, for short-circuiting
       (define and (lambda (a b) (if a b #f)))
       (define xor (lambda (a b) (if a (not b) b)))
       (define >= (lambda (a b) (or (= a b) (> a b))))
       (define < (lambda (a b) (> b a)))
       (define <= (lambda (a b) (>= b a)))
-      (define list (lambda (. rest) rest))
-      (define null? (lambda (v) (= v ())))
 
+      ; list processing
+      (define list (lambda (. rest) rest))
       (define list? (lambda (v)
                       (if (null? v)
                         #t
                         (if (not (pair? v))
                           #f
                           (list? (cdr v))))))
-
       (define map (lambda (proc items)
                     (if (null? items)
                       ()
                       (cons (proc (car items))
                             (map proc (cdr items))))))
-
       (define reduce (lambda (proc init items)
                        (if (null? items)
                          init
                          (reduce proc (proc init (car items)) (cdr items)))))
-
       (define filter (lambda (proc items)
                        (if (null? items)
                          ()
@@ -40,17 +54,14 @@ fn define(env: EnvPtr) {
                            (if (proc first)
                              (cons first (filter proc rest))
                              (filter proc rest))))))
-
       (define count (lambda (items)
                       (reduce (lambda (memo _) (+ memo 1)) 0 items)))
-
       (define any? (lambda (proc items)
                      (if (null? items)
                        #f
                        (if (proc (car items))
                          #t
                          (any? proc (cdr items))))))
-
       (define all? (lambda (proc items)
                      (not (any? (lambda (v) (not (proc v))) items))))
     ";
@@ -91,8 +102,6 @@ fn test() {
                 Value::Number(3.0).into_ptr(),
             ]),
         ),
-        ("(null? ())", Value::Boolean(true)),
-        ("(null? #f)", Value::Boolean(false)),
         ("(list? ())", Value::Boolean(true)),
         ("(list? (list 1))", Value::Boolean(true)),
         (r#"(list? (list 1 #t #f "hello" ()))"#, Value::Boolean(true)),
@@ -106,14 +115,8 @@ fn test() {
                 Value::Number(4.0).into_ptr(),
             ]),
         ),
-        (
-            "(reduce (lambda (memo v) (+ memo v)) 1 ())",
-            Value::Number(1.0),
-        ),
-        (
-            "(reduce (lambda (memo v) (+ memo v)) 1 (list 1 2 3))",
-            Value::Number(7.0),
-        ),
+        ("(reduce + 1 ())", Value::Number(1.0)),
+        ("(reduce + 1 (list 1 2 3))", Value::Number(7.0)),
         ("(filter (lambda (v) (> v 0)) ())", Value::Null),
         (
             "(filter (lambda (v) (> v 0)) (list 1 -2 3 -4 5))",
