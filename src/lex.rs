@@ -102,6 +102,22 @@ pub struct Token {
     pub literal: String,
 }
 
+fn comment(stream: &mut Stream) {
+    stream.advance(); // move past semicolon character
+    loop {
+        if stream.is_end() {
+            break;
+        }
+
+        let (c, _) = stream.peek(0).unwrap();
+        if c == '\n' {
+            break;
+        }
+
+        stream.advance();
+    }
+}
+
 fn open_brace(stream: &mut Stream) -> Token {
     let (_, p) = stream.take();
     Token {
@@ -127,15 +143,11 @@ fn identifier(stream: &mut Stream) -> Token {
     literal.push(c);
 
     loop {
-        if stream.is_end() {
+        if is_end_of_nonstring_literal(stream) {
             break;
         }
 
         let (c, p) = stream.peek(0).unwrap();
-        if c.is_whitespace() || c == '(' || c == ')' {
-            break;
-        }
-
         stream.advance();
         end = p;
         literal.push(c);
@@ -190,14 +202,11 @@ fn number(stream: &mut Stream) -> Result<Token, Error> {
     let mut period_ok = true;
 
     loop {
-        if stream.is_end() {
+        if is_end_of_nonstring_literal(stream) {
             break;
         }
 
         let (c, p) = stream.peek(0).unwrap();
-        if c.is_whitespace() || c == '(' || c == ')' {
-            break;
-        }
 
         // Next char must be a digit, or it must be a period and
         if !(c.is_digit(10) || (c == '.' && period_ok)) {
@@ -227,6 +236,7 @@ pub fn scan(src: &str) -> Result<Vec<Token>, Error> {
     while !stream.is_end() {
         let (c, _) = stream.peek(0).unwrap();
         match c {
+            ';' => comment(&mut stream),
             '(' => tokens.push(open_brace(&mut stream)),
             ')' => tokens.push(close_brace(&mut stream)),
             '"' => tokens.push(string(&mut stream)?),
@@ -247,6 +257,15 @@ pub fn scan(src: &str) -> Result<Vec<Token>, Error> {
     }
 
     Ok(tokens)
+}
+
+fn is_end_of_nonstring_literal(stream: &mut Stream) -> bool {
+    if stream.is_end() {
+        return true;
+    }
+
+    let (c, _) = stream.peek(0).unwrap();
+    return c.is_whitespace() || c == '(' || c == ')' || c == ';';
 }
 
 #[test]
@@ -277,16 +296,16 @@ fn scan_test() {
         ]
     );
 
-    // newline handling
+    // newline/comment handling handling
     assert_eq!(
         scan(
             "
 a
-  b
+  b  ;comment
        c
 
-    d
-"
+    d;comment
+;comment"
         )
         .unwrap(),
         vec![
