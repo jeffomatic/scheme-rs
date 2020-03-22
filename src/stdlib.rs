@@ -13,12 +13,46 @@ fn define(env: EnvPtr) {
       (define <= (lambda (a b) (>= b a)))
       (define list (lambda (. rest) rest))
       (define null? (lambda (v) (= v ())))
+
       (define list? (lambda (v)
                       (if (null? v)
                         #t
                         (if (not (pair? v))
                           #f
                           (list? (cdr v))))))
+
+      (define map (lambda (proc items)
+                    (if (null? items)
+                      ()
+                      (cons (proc (car items))
+                            (map proc (cdr items))))))
+
+      (define reduce (lambda (proc init items)
+                       (if (null? items)
+                         init
+                         (reduce proc (proc init (car items)) (cdr items)))))
+
+      (define filter (lambda (proc items)
+                       (if (null? items)
+                         ()
+                         (let ((first (car items))
+                               (rest (cdr items)))
+                           (if (proc first)
+                             (cons first (filter proc rest))
+                             (filter proc rest))))))
+
+      (define count (lambda (items)
+                      (reduce (lambda (memo _) (+ memo 1)) 0 items)))
+
+      (define any? (lambda (proc items)
+                     (if (null? items)
+                       #f
+                       (if (proc (car items))
+                         #t
+                         (any? proc (cdr items))))))
+
+      (define all? (lambda (proc items)
+                     (not (any? (lambda (v) (not (proc v))) items))))
     ";
     eval_sequence(&parse(&scan(stdlib).unwrap()).unwrap(), env).unwrap();
 }
@@ -48,6 +82,7 @@ fn test() {
         ("(<= 1 0)", Value::Boolean(false)),
         ("(<= 1 1)", Value::Boolean(true)),
         ("(< 1 2)", Value::Boolean(true)),
+        ("(list)", Value::Null),
         (
             "(list 1 2 3)",
             Value::make_list(&[
@@ -63,6 +98,61 @@ fn test() {
         (r#"(list? (list 1 #t #f "hello" ()))"#, Value::Boolean(true)),
         ("(list? 1234)", Value::Boolean(false)),
         ("(list? (cons 1 2))", Value::Boolean(false)),
+        (
+            "(map (lambda (v) (+ v 1)) (list 1 2 3))",
+            Value::make_list(&[
+                Value::Number(2.0).into_ptr(),
+                Value::Number(3.0).into_ptr(),
+                Value::Number(4.0).into_ptr(),
+            ]),
+        ),
+        (
+            "(reduce (lambda (memo v) (+ memo v)) 1 ())",
+            Value::Number(1.0),
+        ),
+        (
+            "(reduce (lambda (memo v) (+ memo v)) 1 (list 1 2 3))",
+            Value::Number(7.0),
+        ),
+        ("(filter (lambda (v) (> v 0)) ())", Value::Null),
+        (
+            "(filter (lambda (v) (> v 0)) (list 1 -2 3 -4 5))",
+            Value::make_list(&[
+                Value::Number(1.0).into_ptr(),
+                Value::Number(3.0).into_ptr(),
+                Value::Number(5.0).into_ptr(),
+            ]),
+        ),
+        ("(count ())", Value::Number(0.0)),
+        ("(count (list 1))", Value::Number(1.0)),
+        ("(count (list 1 2 3))", Value::Number(3.0)),
+        ("(any? (lambda (v) (> v 0)) ())", Value::Boolean(false)),
+        ("(any? (lambda (v) (> v 0)) (list 1))", Value::Boolean(true)),
+        (
+            "(any? (lambda (v) (> v 0)) (list -1))",
+            Value::Boolean(false),
+        ),
+        (
+            "(any? (lambda (v) (> v 0)) (list 1 -2 -3))",
+            Value::Boolean(true),
+        ),
+        (
+            "(any? (lambda (v) (> v 0)) (list -1 -2 3))",
+            Value::Boolean(true),
+        ),
+        (
+            "(any? (lambda (v) (> v 0)) (list -1 -2 -3))",
+            Value::Boolean(false),
+        ),
+        ("(all? (lambda (v) (> v 0)) ())", Value::Boolean(true)),
+        (
+            "(all? (lambda (v) (> v 0)) (list 1 2 3))",
+            Value::Boolean(true),
+        ),
+        (
+            "(all? (lambda (v) (> v 0)) (list 1 2 -3))",
+            Value::Boolean(false),
+        ),
     ];
 
     for c in cases.iter() {
