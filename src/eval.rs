@@ -156,6 +156,8 @@ pub fn eval(expr: ExprPtr, env: EnvPtr) -> Result<ValuePtr, Error> {
             on_false,
             ..
         } => eval_if(condition.clone(), on_true.clone(), on_false.clone(), env),
+        Expr::And { seq, .. } => Ok(eval_and(&seq, env)?),
+        Expr::Or { seq, .. } => Ok(eval_or(&seq, env)?),
         Expr::Lambda(procdef) => Ok(eval_lambda(&procdef, env)),
         Expr::Let {
             definitions, seq, ..
@@ -217,6 +219,36 @@ fn eval_if(
     } else {
         eval(on_false, env)
     }
+}
+
+fn eval_and(seq: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
+    let mut valptr = Value::Boolean(true).into_ptr();
+    for expr in seq {
+        valptr = eval(expr.clone(), env.clone())?;
+        match &*valptr.borrow() {
+            Value::Boolean(b) => {
+                if !b {
+                    // short-circuit all evaluation at the first false
+                    return Ok(Value::Boolean(false).into_ptr());
+                }
+            }
+            _ => (),
+        }
+    }
+    Ok(valptr)
+}
+
+fn eval_or(seq: &[ExprPtr], env: EnvPtr) -> Result<ValuePtr, Error> {
+    for expr in seq {
+        let valptr = eval(expr.clone(), env.clone())?;
+        let val = &*valptr.borrow();
+        match val {
+            Value::Boolean(false) => (),
+            _ => return Ok(valptr.clone()),
+        }
+    }
+
+    Ok(Value::Boolean(false).into_ptr())
 }
 
 fn eval_lambda(procdef: &ProcDef, env: EnvPtr) -> ValuePtr {
@@ -438,6 +470,18 @@ fn test_eval() {
         // if
         ("(if #t 1 2)", Value::Number(1.0)),
         ("(if #f 1 2)", Value::Number(2.0)),
+        // and
+        ("(and)", Value::Boolean(true)),
+        ("(and 1)", Value::Number(1.0)),
+        ("(and #f)", Value::Boolean(false)),
+        ("(and 1 2 3)", Value::Number(3.0)),
+        ("(and #t #t #f)", Value::Boolean(false)),
+        // or
+        ("(or)", Value::Boolean(false)),
+        ("(or 1)", Value::Number(1.0)),
+        ("(or #f)", Value::Boolean(false)),
+        ("(or 1 2 3)", Value::Number(1.0)),
+        ("(or #f #f 1)", Value::Number(1.0)),
         // variadic arguments
         (
             "

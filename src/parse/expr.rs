@@ -102,6 +102,14 @@ pub enum Expr {
         on_false: ExprPtr,
         span: SrcSpan,
     },
+    And {
+        seq: Vec<ExprPtr>,
+        span: SrcSpan,
+    },
+    Or {
+        seq: Vec<ExprPtr>,
+        span: SrcSpan,
+    },
     Lambda(ProcDef),
     Let {
         definitions: Vec<(String, ExprPtr)>,
@@ -197,6 +205,8 @@ fn parse_compound(children: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
                         match tok.literal.as_str() {
                             "define" => Ok(parse_define(rest, span)?),
                             "if" => Ok(parse_if(rest, span)?),
+                            "and" => Ok(parse_and(rest, span)?),
+                            "or" => Ok(parse_or(rest, span)?),
                             "lambda" => Ok(parse_lambda(rest, span)?),
                             "let" => Ok(parse_let(rest, span)?),
                             _ => Ok(Expr::Application {
@@ -328,6 +338,20 @@ fn parse_if(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
         condition: parse_sexpr(&args[0])?.into_ptr(),
         on_true: parse_sexpr(&args[1])?.into_ptr(),
         on_false: parse_sexpr(&args[2])?.into_ptr(),
+        span,
+    })
+}
+
+fn parse_and(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
+    Ok(Expr::And {
+        seq: parse_sexpr_seq(args)?,
+        span,
+    })
+}
+
+fn parse_or(args: &[Sexpr], span: SrcSpan) -> Result<Expr, Error> {
+    Ok(Expr::Or {
+        seq: parse_sexpr_seq(args)?,
         span,
     })
 }

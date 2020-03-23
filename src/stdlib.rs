@@ -22,9 +22,6 @@ fn define(env: EnvPtr) {
 
       ; some things that maybe should just be operators
       (define (not a) (if a #f #t))
-      (define (or a b) (if a #t b)) ; this needs to be a special form, for short-circuiting
-      (define (and a b) (if a b #f))
-      (define (xor a b) (if a (not b) b))
       (define (>= a b) (or (= a b) (> a b)))
       (define (< a b) (> b a))
       (define (<= a b) (>= b a))
@@ -82,14 +79,6 @@ fn test() {
     let cases = &[
         ("(not #t)", Value::Boolean(false)),
         ("(not #f)", Value::Boolean(true)),
-        ("(and #f #f)", Value::Boolean(false)),
-        ("(and #f #t)", Value::Boolean(false)),
-        ("(and #t #f)", Value::Boolean(false)),
-        ("(and #t #t)", Value::Boolean(true)),
-        ("(or #f #f)", Value::Boolean(false)),
-        ("(or #f #t)", Value::Boolean(true)),
-        ("(or #t #f)", Value::Boolean(true)),
-        ("(or #t #t)", Value::Boolean(true)),
         ("(>= 1 0)", Value::Boolean(true)),
         ("(>= 1 1)", Value::Boolean(true)),
         ("(>= 1 2)", Value::Boolean(false)),
