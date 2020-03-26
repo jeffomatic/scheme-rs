@@ -551,10 +551,10 @@ fn test_eval() {
         (
             "
             (let ((y (lambda (f)
-                       ((lambda (funcedure)
-                          (f (lambda (arg) ((funcedure funcedure) arg))))
-                        (lambda (funcedure)
-                          (f (lambda (arg) ((funcedure funcedure) arg)))))))
+                       ((lambda (proc)
+                          (f (lambda (arg) ((proc proc) arg))))
+                        (lambda (proc)
+                          (f (lambda (arg) ((proc proc) arg)))))))
                   (fib-pre (lambda (f)
                              (lambda (n)
                                (if (= n 0)
